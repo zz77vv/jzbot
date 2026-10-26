@@ -60,7 +60,7 @@ async def test_disable_then_restore_does_not_restore_old_money(ledger_db, owner_
     # Management status deliberately does NOT block later normal Business accounting.
     await ledger_db.set_customer_disabled(owner_id, owner_id, customer_id, True)
     result = await ledger_db.apply_amount(owner_id, customer_id, 2, 5, 'business-1')
-    assert result['receipt_text'] == '+0.5｜余0.5U'
+    assert result['receipt_text'] == '入金 0.5 USDT, 余额 0.5 USDT'
 
 
 @pytest.mark.parametrize('balance', [150, -80, 10**100, -(10**100), 0])

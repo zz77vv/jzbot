@@ -151,9 +151,10 @@ class AccountingRepository(BaseRepository):
                         now,
                     ),
                 )
-                sign = "+" if entry_type == "deposit" else "-"
+                action = "入金" if entry_type == "deposit" else "出金"
                 receipt_text = (
-                    f"{sign}{format_tenths(absolute_amount)}｜余{format_tenths(after)}U"
+                    f"{action} {format_tenths(absolute_amount)} USDT, "
+                    f"余额 {format_tenths(after)} USDT"
                 )
                 outbox_id = await self.store._insert_receipt_outbox(
                     conn,

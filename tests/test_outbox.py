@@ -51,7 +51,7 @@ async def test_successful_send_marks_delivered(
     assert row["status"] == "delivered"
     assert row["delivered_at_utc"] is not None
     successful_context.bot.send_message.assert_awaited_once()
-    assert successful_context.bot.send_message.await_args.kwargs["text"] == "+10｜余10U"
+    assert successful_context.bot.send_message.await_args.kwargs["text"] == "入金 10 USDT, 余额 10 USDT"
     successful_context.bot.pin_chat_message.assert_awaited_once()
 
 
@@ -156,7 +156,7 @@ async def test_clear_also_creates_receipt_when_balance_is_zero(
 
 
 @pytest.mark.asyncio
-async def test_minimal_receipt_templates_and_recent_entries_unchanged(
+async def test_explicit_receipt_templates_and_recent_entries_unchanged(
     ledger_db, owner_id, customer_id
 ):
     deposit = await create_amount(
@@ -175,11 +175,11 @@ async def test_minimal_receipt_templates_and_recent_entries_unchanged(
         ledger_db, owner_id, customer_id, source=205, amount=-200
     )
 
-    assert deposit["receipt_text"] == "+15｜余15U"
-    assert withdraw["receipt_text"] == "-3｜余12U"
-    assert fraction["receipt_text"] == "+0.5｜余12.5U"
-    assert half_withdraw["receipt_text"] == "-0.5｜余12U"
-    assert negative["receipt_text"] == "-20｜余-8U"
+    assert deposit["receipt_text"] == "入金 15 USDT, 余额 15 USDT"
+    assert withdraw["receipt_text"] == "出金 3 USDT, 余额 12 USDT"
+    assert fraction["receipt_text"] == "入金 0.5 USDT, 余额 12.5 USDT"
+    assert half_withdraw["receipt_text"] == "出金 0.5 USDT, 余额 12 USDT"
+    assert negative["receipt_text"] == "出金 20 USDT, 余额 -8 USDT"
 
     stored = []
     for result in (deposit, withdraw, fraction, half_withdraw, negative):
@@ -187,11 +187,11 @@ async def test_minimal_receipt_templates_and_recent_entries_unchanged(
         stored.append(row["receipt_text"])
         assert row["should_pin"] == 1
     assert stored == [
-        "+15｜余15U",
-        "-3｜余12U",
-        "+0.5｜余12.5U",
-        "-0.5｜余12U",
-        "-20｜余-8U",
+        "入金 15 USDT, 余额 15 USDT",
+        "出金 3 USDT, 余额 12 USDT",
+        "入金 0.5 USDT, 余额 12.5 USDT",
+        "出金 0.5 USDT, 余额 12 USDT",
+        "出金 20 USDT, 余额 -8 USDT",
     ]
 
     recent = await ledger_db.get_recent_entries(
@@ -325,7 +325,7 @@ async def test_retry_uses_the_same_stored_receipt_text(
 
     assert not await jzbot.deliver_outbox_receipt(context, result["outbox_id"])
     pending = await ledger_db.get_outbox(result["outbox_id"])
-    assert pending["receipt_text"] == "+15｜余15U"
+    assert pending["receipt_text"] == "入金 15 USDT, 余额 15 USDT"
 
     context.bot.send_message.side_effect = None
     context.bot.send_message.return_value = SimpleNamespace(message_id=555)
@@ -334,5 +334,55 @@ async def test_retry_uses_the_same_stored_receipt_text(
         now=datetime.fromisoformat(pending["next_attempt_at_utc"]),
     )
     delivered = await ledger_db.get_outbox(result["outbox_id"])
-    assert delivered["receipt_text"] == "+15｜余15U"
-    assert context.bot.send_message.await_args.kwargs["text"] == "+15｜余15U"
+    assert delivered["receipt_text"] == "入金 15 USDT, 余额 15 USDT"
+    assert context.bot.send_message.await_args.kwargs["text"] == "入金 15 USDT, 余额 15 USDT"
+
+
+@pytest.mark.asyncio
+async def test_decimal_withdrawal_receipt_matches_committed_balance(
+    ledger_db, monkeypatch, successful_context, owner_id, customer_id
+):
+    monkeypatch.setattr(jzbot, "db", ledger_db)
+    await create_amount(ledger_db, owner_id, customer_id, source=601, amount=-334)
+    result = await create_amount(
+        ledger_db, owner_id, customer_id, source=602, amount=-52
+    )
+    expected = "出金 5.2 USDT, 余额 -38.6 USDT"
+    assert result["receipt_text"] == expected
+    assert await ledger_db.get_balance(owner_id, customer_id) == -386
+    row = await ledger_db.get_outbox(result["outbox_id"])
+    assert row["receipt_text"] == expected and row["should_pin"] == 1
+    await jzbot.deliver_outbox_receipt(successful_context, result["outbox_id"])
+    sent = successful_context.bot.send_message.await_args.kwargs
+    assert sent["text"] == expected
+    assert sent["reply_parameters"].message_id == 602
+    assert "parse_mode" not in sent and "rich_message" not in sent
+    successful_context.bot.pin_chat_message.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_existing_pending_receipt_is_not_reformatted_on_restart(
+    tmp_path, monkeypatch, successful_context, owner_id, customer_id
+):
+    path = tmp_path / "existing-pending.db"
+    first = jzbot.LedgerDB(path)
+    await first.open()
+    await first.upsert_business_connection("business-1", owner_id, True)
+    result = await create_amount(first, owner_id, customer_id)
+    legacy_text = "+10｜余10U"
+    await first.conn.execute(
+        "UPDATE receipt_outbox SET receipt_text = ? WHERE id = ?",
+        (legacy_text, result["outbox_id"]),
+    )
+    await first.conn.commit()
+    await first.close()
+    restarted = jzbot.LedgerDB(path)
+    await restarted.open()
+    monkeypatch.setattr(jzbot, "db", restarted)
+    try:
+        assert await jzbot.process_due_outbox(successful_context) == 1
+        assert successful_context.bot.send_message.await_args.kwargs["text"] == legacy_text
+        row = await restarted.get_outbox(result["outbox_id"])
+        assert row["receipt_text"] == legacy_text and row["status"] == "delivered"
+    finally:
+        await restarted.close()

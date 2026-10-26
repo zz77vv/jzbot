@@ -153,7 +153,7 @@ async def test_sent_but_response_timeout_is_pending_not_exactly_once(ledger_db, 
     ctx = context(); ctx.bot.send_message.side_effect = ambiguous
     assert not await OutboxService(ledger_db).deliver_outbox_receipt(ctx,record['outbox_id'])
     row = await ledger_db.get_outbox(record['outbox_id'])
-    assert accepted == ['+10｜余10U'] and row['status']=='pending'
+    assert accepted == ['入金 10 USDT, 余额 10 USDT'] and row['status']=='pending'
     assert await ledger_db.get_balance(owner_id,customer_id)==100
     ctx.bot.pin_chat_message.assert_not_awaited()
 

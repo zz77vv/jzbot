@@ -46,7 +46,7 @@ async def test_commit_then_independent_worker_reply_and_pin(ledger_db,owner_id,c
     assert rt.outbox.wakeup.is_set()
     await rt.outbox.process_due_outbox(ctx)
     sent=ctx.bot.send_message.await_args.kwargs
-    assert sent['text']=='+15｜余15U' and sent['reply_parameters'].message_id==1
+    assert sent['text']=='入金 15 USDT, 余额 15 USDT' and sent['reply_parameters'].message_id==1
     assert 'rich_message' not in sent and 'parse_mode' not in sent
     ctx.bot.pin_chat_message.assert_awaited_once()
     await rt.business.on_business_message(update(owner_id,customer_id),ctx)
