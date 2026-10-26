@@ -1,0 +1,4 @@
+# Direct runtime dependencies. Never upgrade the shared production environment blindly.
+python-telegram-bot==22.8
+aiosqlite==0.22.1
+tzdata==2026.5; sys_platform == "win32"
