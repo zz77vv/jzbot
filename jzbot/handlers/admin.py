@@ -86,6 +86,8 @@ class AdminHandlers:
             )
             return
         context.user_data.pop("awaiting_customer_search", None)
+        context.user_data.pop("awaiting_broadcast_text", None)
+        context.user_data.pop("broadcast_preview", None)
         text, keyboard = await self.get_admin_home_view(user.id)
         await send_admin_rich(context.bot, chat.id, text, keyboard)
 
@@ -104,6 +106,8 @@ class AdminHandlers:
             return
         context.user_data.pop("awaiting_customer_search", None)
         context.user_data.pop("customer_search_query", None)
+        context.user_data.pop("awaiting_broadcast_text", None)
+        context.user_data.pop("broadcast_preview", None)
         if not await self.store.is_business_owner(user.id):
             return
         text, keyboard = await self.get_admin_home_view(user.id)
@@ -121,6 +125,8 @@ class AdminHandlers:
             or chat is None
             or (chat.type != ChatType.PRIVATE)
         ):
+            return
+        if await self.broadcast.on_text(update, context):
             return
         if not context.user_data.get("awaiting_customer_search", False):
             return
@@ -282,6 +288,10 @@ class AdminHandlers:
             await query.answer("无权查看账本", show_alert=True)
             return
         try:
+            if await self.broadcast.on_callback(query, user, context, data):
+                return
+            context.user_data.pop("awaiting_broadcast_text", None)
+            context.user_data.pop("broadcast_preview", None)
             if await self.receipts.on_callback(query, user, context, data):
                 return
             if await self.on_customer_management_callback(query, user, context, data):

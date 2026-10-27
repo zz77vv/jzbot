@@ -9,6 +9,28 @@ logger = logging.getLogger("jzbot")
 
 
 class CustomersRepository(BaseRepository):
+    async def get_broadcast_customer_rows(self, owner_user_id, selected, limit):
+        """Owner-scoped union, indexed ledger existence and exact integer signs."""
+        if not selected or not set(selected) <= {'all', 'deposit', 'debt'}:
+            raise ValueError('Invalid broadcast audience')
+        clauses = []
+        if 'all' in selected:
+            clauses.extend([
+                "EXISTS(SELECT 1 FROM ledger l WHERE l.owner_user_id=w.owner_user_id AND l.customer_chat_id=w.customer_chat_id)",
+                "EXISTS(SELECT 1 FROM admin_operations a WHERE a.owner_user_id=w.owner_user_id AND a.customer_chat_id=w.customer_chat_id AND a.result='applied')",
+            ])
+        if 'deposit' in selected:
+            clauses.append("substr(w.balance_tenths,1,1)!='-'")
+        if 'debt' in selected:
+            clauses.append("substr(w.balance_tenths,1,1)='-'")
+        return await (await self._require_conn().execute(
+            """SELECT w.customer_chat_id,p.first_name,p.last_name,p.username
+            FROM wallets w LEFT JOIN customer_profiles p
+            ON p.owner_user_id=w.owner_user_id AND p.customer_chat_id=w.customer_chat_id
+            WHERE w.owner_user_id=? AND (""" + ' OR '.join(clauses) + ") ORDER BY w.customer_chat_id LIMIT ?",
+            (owner_user_id, limit),
+        )).fetchall()
+
     async def get_deposit_wallet_rows(self, owner_user_id):
         """Historical deposits, independent of the current positive-balance filter."""
         return await (

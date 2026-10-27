@@ -18,7 +18,8 @@ def fixture_source(root):
 @pytest.mark.parametrize('name',['ledger.db','ledger.db-wal','ledger.db-shm','bot.log','run.log',
                                   '.env','.env.prod','test.session','.git/config','.github-publish/jzbot/app.py',
                                   '../jzbot/app.py','jzbot/__pycache__/secret.py','reports/customer.json',
-                                  'tests/fixture.db','scripts/credentials.json'])
+                                  'tests/fixture.db','scripts/credentials.json',
+                                  'broadcast.db','broadcast.db-wal','broadcast.db-shm'])
 def test_runtime_sensitive_files_never_allowed(name):
     assert not p.allowed(name)
 

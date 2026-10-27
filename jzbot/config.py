@@ -17,6 +17,14 @@ class Settings:
     require_existing_db: bool = True
     release: str = "development"
 
+    @property
+    def broadcast_path(self):
+        """Separate runtime data, beside this instance's log, never the ledger."""
+        path = self.log_path.parent / "broadcast.db"
+        if path.resolve() in {self.db_path.resolve(), self.log_path.resolve(), self.lock_path.resolve()}:
+            raise ValueError("Broadcast database path conflicts with another runtime file")
+        return path
+
     @classmethod
     def from_environment(cls):
         values = {}

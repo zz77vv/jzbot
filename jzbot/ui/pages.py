@@ -179,6 +179,7 @@ def build_home_view(wallet_rows, outbox_attention_count: int = 0):
             admin_button("🔍 搜索客户", "search", "primary"),
         ],
         [admin_button("🔄 刷新", "home")],
+        [admin_button("客户广播", "bc:list:0", "primary")],
         [
             admin_button("有入金记录", "list:i:0"),
             admin_button("待交付回执", "receipts:0"),

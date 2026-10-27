@@ -35,23 +35,49 @@ def build_application(settings, *, runtime=None):
                     "Production bot does not support Business connections"
                 )
             await application.bot.set_my_commands([BotCommand("start", "打开账本管理")])
+            await runtime.broadcast.queue.open()
+            application.bot_data["broadcast_stop_event"] = asyncio.Event()
+            application.bot_data["broadcast_worker_task"] = asyncio.create_task(
+                runtime.broadcast.worker(application), name="customer-broadcast-worker"
+            )
             stop = asyncio.Event()
             application.bot_data["outbox_stop_event"] = stop
             application.bot_data["outbox_worker_task"] = asyncio.create_task(
                 runtime.outbox.outbox_worker(application), name="receipt-outbox-worker"
             )
             logger.info(
-                "V2 started | version=%s release=%s bot_id=%s business_capable=%s outbox_worker=started",
+                "V2 started | version=%s release=%s bot_id=%s business_capable=%s outbox_worker=started broadcast_worker=started",
                 __version__,
                 settings.release,
                 me.id,
                 me.can_connect_to_business,
             )
         except BaseException:
+            task = application.bot_data.get("broadcast_worker_task")
+            if task is not None:
+                task.cancel()
+                with contextlib.suppress(asyncio.CancelledError):
+                    await task
+            await runtime.broadcast.queue.close()
             await runtime.store.close()
             raise
 
     async def shutdown(application):
+        broadcast_stop = application.bot_data.get("broadcast_stop_event")
+        if broadcast_stop is not None:
+            broadcast_stop.set()
+        broadcast_worker = application.bot_data.get("broadcast_worker_task")
+        try:
+            if broadcast_worker is not None:
+                broadcast_worker.cancel()
+                with contextlib.suppress(asyncio.CancelledError):
+                    await broadcast_worker
+        except Exception:
+            logger.exception("Broadcast shutdown failed; continuing financial worker shutdown")
+        try:
+            await runtime.broadcast.queue.close()
+        except Exception:
+            logger.exception("Broadcast queue close failed; continuing financial shutdown")
         stop = application.bot_data.get("outbox_stop_event")
         if stop is not None:
             stop.set()

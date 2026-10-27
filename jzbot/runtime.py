@@ -1,10 +1,12 @@
 """One explicitly constructed runtime owns repositories, services and handlers."""
 
 from .handlers.admin import AdminHandlers
+from .handlers.broadcast import BroadcastHandlers
 from .handlers.business import BusinessHandlers
 from .handlers.receipts import ReceiptHandlers
 from .repositories.store import LedgerStore
 from .services.accounting import AccountingService
+from .services.broadcast import BroadcastService
 from .services.connections import ConnectionsService
 from .services.management import ManagementService
 from .services.outbox import OutboxService
@@ -24,6 +26,7 @@ class Runtime:
         self.management = ManagementService(self.store)
         self.connections = ConnectionsService(self.store)
         self.outbox = OutboxService(self.store)
+        self.broadcast = BroadcastService(self.store, settings.broadcast_path)
         dependencies = (
             self.store,
             self.connections,
@@ -33,4 +36,5 @@ class Runtime:
         )
         self.admin = AdminHandlers(*dependencies)
         self.admin.receipts = ReceiptHandlers(self.store)
+        self.admin.broadcast = BroadcastHandlers(self.broadcast)
         self.business = BusinessHandlers(*dependencies)

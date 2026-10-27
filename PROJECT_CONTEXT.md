@@ -20,5 +20,10 @@ ledger 的消息 ID 约束，管理员 clear 仍来自 admin_operations。遇到
 任务状态和失败次数约束的内存确认；与投递共享锁，修改时复核，不提前重试，不改金额。
 
 同一个生产 Token 的 V1/V2 必须使用同一个 OS 锁 `/root/jzbot/.jzbot.instance.lock`。
+
+广播使用独立 BroadcastRepository / BroadcastService / BroadcastHandlers，队列数据库在
+日志目录/broadcast.db。LedgerStore 只新增 owner 隔离的只读客户范围查询；正式账本
+schema、版本标记及财务 Outbox 不变。范围中 deposit 包含零余额，仅用于广播。
+新生命周期同时关闭两个 worker；广播失败不能阻断财务 worker 的关闭。
 生产数据库继续是 `/root/jzbot/ledger.db`，新代码目录 `/root/jzbot-v2`，日志写新目录。
 任务书本次允许一次性受保护回滚数据库；不恢复周期任务，不批量删除历史备份。
