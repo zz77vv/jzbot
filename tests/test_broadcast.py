@@ -406,6 +406,76 @@ async def test_recipient_limit_stops_preview_without_creating_job(broadcast,monk
     assert (await broadcast.queue.list_jobs(1001))[1]==0
 
 
+async def test_large_audience_can_select_preview_and_confirm_small_debt_subset(broadcast,monkeypatch):
+    # A real over-1000 audience must not stop the form before selecting one debtor.
+    conn=broadcast.store.conn
+    now='2026-01-01T00:00:00+00:00'
+    await conn.executemany(
+        'INSERT INTO wallets VALUES (?,?,?,?,?)',
+        [(1001,3000+n,'1',now,now) for n in range(1001)])
+    await conn.executemany(
+        '''INSERT INTO ledger(owner_user_id,customer_chat_id,source_message_id,
+           entry_type,amount_tenths,balance_before,balance_after,created_at_utc)
+           VALUES (?,?,1,'deposit','1','0','1',?)''',
+        [(1001,3000+n,now) for n in range(1001)])
+    await conn.commit()
+    await amount(broadcast.store,1001,2001,-1)
+    before=snapshot(broadcast.store.db_path)
+    handler=BroadcastHandlers(broadcast);ctx=context()
+    edit=AsyncMock();send=AsyncMock()
+    monkeypatch.setattr('jzbot.handlers.broadcast.safe_edit_query',edit)
+    monkeypatch.setattr('jzbot.handlers.broadcast.send_admin_rich',send)
+    q,user=callback(1001,'bc:new')
+    await handler.on_callback(q,user,ctx,q.data)
+    assert '选择广播客户' in edit.await_args.args[1]
+    assert '1002 人' in edit.await_args.args[1]
+    q.data='bc:toggle:debt';await handler.on_callback(q,user,ctx,q.data)
+    assert '选择广播客户' in edit.await_args.args[1]
+    assert ctx.user_data['broadcast_selected']==['debt']
+    q.data='bc:compose';await handler.on_callback(q,user,ctx,q.data)
+    assert ctx.user_data['awaiting_broadcast_text']
+    assert await handler.on_text(text_update(1001,'欠款通知'),ctx)
+    request=ctx.user_data['broadcast_preview']
+    assert [row['customer_chat_id'] for row in request['recipients']]==[2001]
+    q.data='bc:confirm:'+request['id'];await handler.on_callback(q,user,ctx,q.data)
+    assert (await broadcast.queue.get(1001,request['id']))['total']==1
+    assert_preserved(before,snapshot(broadcast.store.db_path))
+    for selected in (['all'],['deposit'],['deposit','debt']):
+        with pytest.raises(ValueError,match='最多 1000 人'):
+            await broadcast.prepare(1001,selected,'超出上限')
+
+
+async def test_audience_counts_preserve_exact_sign_history_and_owner_scope(broadcast):
+    store=broadcast.store
+    await amount(store,1001,2001,10**200+1)
+    await amount(store,1001,2002,-(10**200+1))
+    await amount(store,1001,2003,10)
+    request=await store.create_admin_zero(1001,1001,2003)
+    await store.resolve_admin_zero(1001,1001,request)
+    # Admin-only applied history remains part of all; noop history does not.
+    await store.conn.execute('DELETE FROM ledger WHERE customer_chat_id=2003')
+    await store.conn.execute("INSERT INTO wallets VALUES (1001,2004,'0','t','t')")
+    await store.conn.commit()
+    request=await store.create_admin_zero(1001,1001,2004)
+    await store.resolve_admin_zero(1001,1001,request)
+    await store.upsert_customer_profile(1001,2005,None,'仅资料',None)
+    await store.upsert_business_connection('other',1002,True)
+    await amount(store,1002,2001,-10)
+    assert await broadcast.audience_counts(1001)=={'all':3,'deposit':3,'debt':1}
+    assert await broadcast.audience_counts(1002)=={'all':1,'deposit':0,'debt':1}
+    assert await broadcast.audience_counts(9999)=={'all':0,'deposit':0,'debt':0}
+
+
+async def test_confirmation_rechecks_selected_recipient_limit(broadcast,monkeypatch):
+    await amount(broadcast.store,1001,2001,-10)
+    request=await broadcast.prepare(1001,['debt'],'通知')
+    monkeypatch.setattr('jzbot.services.broadcast.MAX_RECIPIENTS',1)
+    await amount(broadcast.store,1001,2002,-10)
+    with pytest.raises(ValueError,match='最多 1 人'):
+        await broadcast.confirm(1001,request)
+    assert (await broadcast.queue.list_jobs(1001))[1]==0
+
+
 async def test_empty_audience_stops_preview(broadcast):
     with pytest.raises(ValueError,match='没有客户'):
         await broadcast.prepare(1001,['all'],'不应发送')
@@ -425,3 +495,4 @@ async def test_failed_ack_stops_worker_and_does_not_block_financial_shutdown(tmp
     monkeypatch.setattr(rt.broadcast.queue,'close',close_failure)
     await app.post_shutdown(fake)
     assert rt.store.conn is None and fake.bot_data['outbox_worker_task'].done()
+

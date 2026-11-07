@@ -48,16 +48,18 @@ def test_secret_scan_blocks_credentials_without_echoing_value(kind):
     assert secret not in str(err.value)
 
 
-@pytest.mark.parametrize('problem',['wrong-user','wrong-owner','public','read-only','branch'])
+@pytest.mark.parametrize('problem',['wrong-user','wrong-owner','public','read-only','branch','wrong-id','missing-id'])
 def test_wrong_repository_identity_or_privacy_stops(monkeypatch,problem):
     user={'login':'zz77vv'}
-    repo={'full_name':p.REPOSITORY,'owner':{'login':'zz77vv'},'private':True,
+    repo={'id':1434510965,'full_name':p.REPOSITORY,'owner':{'login':'zz77vv'},'private':True,
           'permissions':{'push':True},'default_branch':'main'}
     if problem=='wrong-user':user['login']='other'
     if problem=='wrong-owner':repo['owner']['login']='other'
     if problem=='public':repo['private']=False
     if problem=='read-only':repo['permissions']['push']=False
     if problem=='branch':repo['default_branch']='unrelated'
+    if problem=='wrong-id':repo['id']=1434510966
+    if problem=='missing-id':repo.pop('id')
     monkeypatch.setattr(p,'api',lambda endpoint:user if endpoint=='user' else repo)
     with pytest.raises(p.PublishError):p.verify_repository()
 
@@ -68,6 +70,18 @@ def test_local_test_failure_prevents_creation_and_push(tmp_path,monkeypatch):
     monkeypatch.setattr(p,'validate',Mock(side_effect=RuntimeError('test fixture failure')))
     monkeypatch.setattr(p,'run',network)
     with pytest.raises(RuntimeError,match='test fixture failure'):p.publish(create_private=True)
+    network.assert_not_called()
+
+
+def test_create_flag_refuses_replacement_repository_without_creation_or_push(tmp_path,monkeypatch):
+    fixture_source(tmp_path)
+    network=Mock(side_effect=AssertionError('Repository creation must not be attempted'))
+    monkeypatch.setattr(p,'ROOT',tmp_path)
+    monkeypatch.setattr(p,'validate',Mock())
+    monkeypatch.setattr(p,'api',lambda endpoint:{'login':'zz77vv'})
+    monkeypatch.setattr(p,'run',network)
+    with pytest.raises(p.PublishError,match='existing repository'):
+        p.publish(create_private=True)
     network.assert_not_called()
 
 
@@ -100,7 +114,16 @@ def test_historical_runtime_file_or_secret_is_blocked(monkeypatch):
     with pytest.raises(p.PublishError):p.audit_history()
 
 
-def test_v2_publisher_cannot_target_old_repository():
-    assert p.REPOSITORY=='zz77vv/jzbot-v2'
-    assert p.MIRROR.parent==p.ROOT and p.ROOT.name=='jzbot-v2'
-    assert p.REMOTE.endswith('/jzbot-v2.git') and p.BRANCH=='main'
+def test_publisher_accepts_canonical_repository_and_remote(monkeypatch):
+    user={'login':'zz77vv'}
+    repo={'id':1434510965,'full_name':'zz77vv/jzbot','owner':{'login':'zz77vv'},
+          'private':True,'permissions':{'push':True},'default_branch':'main'}
+    def api(endpoint):
+        if endpoint=='user':return user
+        assert endpoint=='repos/zz77vv/jzbot'
+        return repo
+    monkeypatch.setattr(p,'api',api)
+    assert p.verify_repository()==user
+    assert p.REMOTE=='https://github.com/zz77vv/jzbot.git' and p.BRANCH=='main'
+    assert p.MIRROR.parent==p.ROOT
+

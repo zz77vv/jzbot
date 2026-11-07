@@ -25,6 +25,17 @@ class Settings:
             raise ValueError("Broadcast database path conflicts with another runtime file")
         return path
 
+    @property
+    def command_path(self):
+        """Trusted command recovery has its own sidecar, never a ledger table."""
+        path = self.log_path.parent / "commands.db"
+        if path.resolve() in {
+            self.db_path.resolve(), self.log_path.resolve(), self.lock_path.resolve(),
+            self.broadcast_path.resolve(),
+        }:
+            raise ValueError("Command database path conflicts with another runtime file")
+        return path
+
     @classmethod
     def from_environment(cls):
         values = {}
@@ -65,3 +76,4 @@ class Settings:
         return cls(
             token, db_path, lock, log, True, value("JZBOT_RELEASE", "unversioned")
         )
+

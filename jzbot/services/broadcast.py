@@ -46,6 +46,10 @@ class BroadcastService:
         self.send_lock = asyncio.Lock()
         self.wakeup = asyncio.Event()
 
+    async def audience_counts(self, owner):
+        async with self.store.write_lock:
+            return await self.store.get_broadcast_audience_counts(owner)
+
     async def recipients(self, owner, selected):
         if not selected or not set(selected) <= AUDIENCES.keys():
             raise ValueError('请至少选择一种有效客户范围。')
@@ -203,3 +207,4 @@ class BroadcastService:
                     for task in waits:
                         task.cancel()
                     await asyncio.gather(*waits, return_exceptions=True)
+

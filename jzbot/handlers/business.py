@@ -140,33 +140,10 @@ class BusinessHandlers:
                     context, business_connection_id, customer_chat_id, "\n".join(lines)
                 )
                 return
-            if is_clear:
-                result = await self.accounting.clear_balance(
-                    owner_user_id,
-                    customer_chat_id,
-                    source_message_id,
-                    business_connection_id,
-                )
-                if result["duplicate"]:
-                    if result.get("outbox_status") == "pending" and result.get(
-                        "outbox_id"
-                    ):
-                        self.outbox.notify()
-                    return
-                self.outbox.notify()
-                return
-            result = await self.accounting.apply_amount(
-                owner_user_id,
-                customer_chat_id,
-                source_message_id,
-                delta_tenths,
-                business_connection_id,
+            await self.commands.submit(
+                context, owner_user_id, customer_chat_id, source_message_id,
+                business_connection_id, delta=delta_tenths, clear=is_clear,
             )
-            if result["duplicate"]:
-                if result.get("outbox_status") == "pending" and result.get("outbox_id"):
-                    self.outbox.notify()
-                return
-            self.outbox.notify()
         except TelegramError:
             logger.exception(
                 "Telegram error | owner=%s chat=%s message=%s",
@@ -181,3 +158,4 @@ class BusinessHandlers:
                 customer_chat_id,
                 source_message_id,
             )
+

@@ -7,18 +7,35 @@ from jzbot.repositories.base import BaseRepository
 
 logger = logging.getLogger("jzbot")
 
+BROADCAST_HISTORY_SQL = """(
+    EXISTS(SELECT 1 FROM ledger l
+           WHERE l.owner_user_id=w.owner_user_id AND l.customer_chat_id=w.customer_chat_id)
+    OR EXISTS(SELECT 1 FROM admin_operations a
+              WHERE a.owner_user_id=w.owner_user_id AND a.customer_chat_id=w.customer_chat_id
+              AND a.result='applied')
+)"""
+
 
 class CustomersRepository(BaseRepository):
+    async def get_broadcast_audience_counts(self, owner_user_id):
+        """Uncapped category counts without loading recipients or casting balances."""
+        row = await (await self._require_conn().execute(
+            """SELECT
+                COUNT(CASE WHEN """ + BROADCAST_HISTORY_SQL + """ THEN 1 END) AS "all",
+                COUNT(CASE WHEN substr(w.balance_tenths,1,1)!='-' THEN 1 END) AS deposit,
+                COUNT(CASE WHEN substr(w.balance_tenths,1,1)='-' THEN 1 END) AS debt
+            FROM wallets w WHERE w.owner_user_id=?""",
+            (owner_user_id,),
+        )).fetchone()
+        return {key: int(row[key]) for key in ('all', 'deposit', 'debt')}
+
     async def get_broadcast_customer_rows(self, owner_user_id, selected, limit):
         """Owner-scoped union, indexed ledger existence and exact integer signs."""
         if not selected or not set(selected) <= {'all', 'deposit', 'debt'}:
             raise ValueError('Invalid broadcast audience')
         clauses = []
         if 'all' in selected:
-            clauses.extend([
-                "EXISTS(SELECT 1 FROM ledger l WHERE l.owner_user_id=w.owner_user_id AND l.customer_chat_id=w.customer_chat_id)",
-                "EXISTS(SELECT 1 FROM admin_operations a WHERE a.owner_user_id=w.owner_user_id AND a.customer_chat_id=w.customer_chat_id AND a.result='applied')",
-            ])
+            clauses.append(BROADCAST_HISTORY_SQL)
         if 'deposit' in selected:
             clauses.append("substr(w.balance_tenths,1,1)!='-'")
         if 'debt' in selected:
@@ -208,3 +225,4 @@ class CustomersRepository(BaseRepository):
             "entry_count": entry_count,
             "recent": recent,
         }
+

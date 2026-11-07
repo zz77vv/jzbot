@@ -31,7 +31,7 @@ class BroadcastHandlers:
 
     async def audience(self, query, owner, context):
         selected = context.user_data.get('broadcast_selected', [])
-        counts = {key: len(await self.service.recipients(owner, [key])) for key in AUDIENCES}
+        counts = await self.service.audience_counts(owner)
         await safe_edit_query(query, *audience_view(selected, counts))
 
     async def progress(self, query, owner, job_id, page=0, notice=None):
@@ -135,3 +135,4 @@ class BroadcastHandlers:
             notice = '已有发送中或暂停的广播，请先处理该任务。' if isinstance(exc, sqlite3.IntegrityError) else str(exc)
             await safe_edit_query(query, *compose_view(notice))
         return True
+

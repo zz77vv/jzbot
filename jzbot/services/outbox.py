@@ -76,12 +76,20 @@ class OutboxService:
                 )
                 return False
             if bool(row["should_pin"]):
-                await try_pin_business_message(
-                    context,
-                    row["business_connection_id"],
-                    int(row["customer_chat_id"]),
-                    sent.message_id,
-                )
+                # Keep historical receipt text and replies, but never let a
+                # delayed receipt replace a newer balance's pin. The shared
+                # delivery lock covers this check through the Telegram call.
+                async with self.store.write_lock:
+                    superseded = await self.store.has_newer_delivered_pin(
+                        row["owner_user_id"], row["customer_chat_id"], outbox_id
+                    )
+                if not superseded:
+                    await try_pin_business_message(
+                        context,
+                        row["business_connection_id"],
+                        int(row["customer_chat_id"]),
+                        sent.message_id,
+                    )
             return True
 
     async def process_due_outbox(self, context, limit: int = OUTBOX_BATCH_SIZE) -> int:
@@ -117,3 +125,4 @@ class OutboxService:
                     await asyncio.gather(*waits, return_exceptions=True)
         except asyncio.CancelledError:
             raise
+

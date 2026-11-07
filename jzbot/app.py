@@ -26,6 +26,27 @@ logger = logging.getLogger("jzbot")
 def build_application(settings, *, runtime=None):
     runtime = runtime if runtime is not None else Runtime(settings)
 
+    async def close_runtime(application):
+        # Stop ingress replay before closing accounting or the receipt worker.
+        for name in ("command", "broadcast", "outbox"):
+            stop = application.bot_data.get(f"{name}_stop_event")
+            if stop is not None:
+                stop.set()
+            task = application.bot_data.get(f"{name}_worker_task")
+            if task is not None:
+                task.cancel()
+                try:
+                    with contextlib.suppress(asyncio.CancelledError):
+                        await task
+                except Exception:
+                    logger.exception("%s worker shutdown failed; continuing cleanup", name)
+        for queue in (runtime.commands.queue, runtime.broadcast.queue):
+            try:
+                await queue.close()
+            except Exception:
+                logger.exception("Runtime queue close failed; continuing cleanup")
+        await runtime.store.close()
+
     async def initialize(application):
         try:
             await runtime.store.open()
@@ -35,7 +56,12 @@ def build_application(settings, *, runtime=None):
                     "Production bot does not support Business connections"
                 )
             await application.bot.set_my_commands([BotCommand("start", "打开账本管理")])
+            await runtime.commands.queue.open()
             await runtime.broadcast.queue.open()
+            application.bot_data["command_stop_event"] = asyncio.Event()
+            application.bot_data["command_worker_task"] = asyncio.create_task(
+                runtime.commands.worker(application), name="trusted-command-worker"
+            )
             application.bot_data["broadcast_stop_event"] = asyncio.Event()
             application.bot_data["broadcast_worker_task"] = asyncio.create_task(
                 runtime.broadcast.worker(application), name="customer-broadcast-worker"
@@ -46,50 +72,19 @@ def build_application(settings, *, runtime=None):
                 runtime.outbox.outbox_worker(application), name="receipt-outbox-worker"
             )
             logger.info(
-                "V2 started | version=%s release=%s bot_id=%s business_capable=%s outbox_worker=started broadcast_worker=started",
+                "V2 started | version=%s release=%s bot_id=%s business_capable=%s command_worker=started outbox_worker=started broadcast_worker=started",
                 __version__,
                 settings.release,
                 me.id,
                 me.can_connect_to_business,
             )
         except BaseException:
-            task = application.bot_data.get("broadcast_worker_task")
-            if task is not None:
-                task.cancel()
-                with contextlib.suppress(asyncio.CancelledError):
-                    await task
-            await runtime.broadcast.queue.close()
-            await runtime.store.close()
+            await close_runtime(application)
             raise
 
     async def shutdown(application):
-        broadcast_stop = application.bot_data.get("broadcast_stop_event")
-        if broadcast_stop is not None:
-            broadcast_stop.set()
-        broadcast_worker = application.bot_data.get("broadcast_worker_task")
-        try:
-            if broadcast_worker is not None:
-                broadcast_worker.cancel()
-                with contextlib.suppress(asyncio.CancelledError):
-                    await broadcast_worker
-        except Exception:
-            logger.exception("Broadcast shutdown failed; continuing financial worker shutdown")
-        try:
-            await runtime.broadcast.queue.close()
-        except Exception:
-            logger.exception("Broadcast queue close failed; continuing financial shutdown")
-        stop = application.bot_data.get("outbox_stop_event")
-        if stop is not None:
-            stop.set()
-        worker = application.bot_data.get("outbox_worker_task")
-        try:
-            if worker is not None:
-                worker.cancel()
-                with contextlib.suppress(asyncio.CancelledError):
-                    await worker
-        finally:
-            await runtime.store.close()
-            logger.info("V2 stopped")
+        await close_runtime(application)
+        logger.info("V2 stopped")
 
     application = (
         Application.builder()
@@ -133,3 +128,4 @@ def main():
         application.run_polling(
             allowed_updates=Update.ALL_TYPES, drop_pending_updates=False
         )
+

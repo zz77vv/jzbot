@@ -188,6 +188,23 @@ class OutboxRepository(BaseRepository):
             )
         ).fetchall()
 
+    async def has_newer_delivered_pin(
+        self, owner_user_id: int, customer_chat_id: int, outbox_id: int
+    ) -> bool:
+        """Receipt IDs follow committed accounting order, independent of retries."""
+        row = await (
+            await self._require_conn().execute(
+                """
+            SELECT 1 FROM receipt_outbox
+            WHERE owner_user_id = ? AND customer_chat_id = ? AND id > ?
+              AND status = 'delivered' AND should_pin = 1
+            LIMIT 1
+            """,
+                (owner_user_id, customer_chat_id, outbox_id),
+            )
+        ).fetchone()
+        return row is not None
+
     async def mark_outbox_delivered(
         self, outbox_id: int, delivered_at_utc: str | None = None
     ) -> None:
@@ -275,3 +292,4 @@ class OutboxRepository(BaseRepository):
             )
         ).fetchall()
         return (list(rows), total, page)
+

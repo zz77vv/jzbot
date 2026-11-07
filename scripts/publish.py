@@ -1,4 +1,4 @@
-"""Audited, source-only publication to the dedicated PRIVATE V2 repository."""
+"""Audited, source-only publication to the verified private repository."""
 
 import argparse
 import ast
@@ -19,7 +19,8 @@ from scripts.check import validate
 MODULE_ROOT = Path(__file__).resolve().parents[1]
 # The mirror may run offline tests, but is never a second development/push root.
 ROOT = MODULE_ROOT.parent if MODULE_ROOT.name == ".github-publish" else MODULE_ROOT
-REPOSITORY = "zz77vv/jzbot-v2"
+REPOSITORY = "zz77vv/jzbot"
+REPOSITORY_ID = 1434510965
 BRANCH = "main"
 REMOTE = "https://github.com/" + REPOSITORY + ".git"
 GH = Path(r"D:\Codex\.tools\github-cli\bin\gh.exe")
@@ -173,12 +174,13 @@ def verify_repository():
     repo = api("repos/" + REPOSITORY)
     if (
         user["login"] != "zz77vv"
+        or repo.get("id") != REPOSITORY_ID
         or repo["full_name"] != REPOSITORY
         or repo["owner"]["login"] != "zz77vv"
         or repo["private"] is not True
         or not repo.get("permissions", {}).get("push")
     ):
-        raise PublishError("Unexpected repository owner/privacy/writer")
+        raise PublishError("Unexpected repository identity/owner/privacy/writer")
     if repo.get("default_branch") not in (None, BRANCH):
         raise PublishError("Unexpected default branch")
     return user
@@ -212,11 +214,7 @@ def publish(*, create_private=False):
     if fingerprint(collect(ROOT)) != original:
         raise PublishError("Source changed during tests")
     if create_private:
-        # --create-private is only for the task's explicitly authorized NEW repo.
-        # If it exists, creation fails safely; never reset or overwrite it.
-        if api("user")["login"] != "zz77vv":
-            raise PublishError("Wrong GitHub identity; no repository created")
-        run([GH, "repo", "create", REPOSITORY, "--private"])
+        raise PublishError("Publication requires the existing repository; creation is disabled")
     user = verify_repository()
     MIRROR.mkdir(exist_ok=True)
     initialized = (MIRROR / ".git").exists()
@@ -316,7 +314,9 @@ if __name__ == "__main__":
             "Run publication from the development source, not its mirror"
         )
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--create-private", action="store_true")
+    parser.add_argument("--create-private", action="store_true",
+                        help="Deprecated: creation is disabled for the fixed repository identity")
     args = parser.parse_args()
     with SingleInstanceLock(ROOT / ".github-publish.lock"):
         publish(create_private=args.create_private)
+
