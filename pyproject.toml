@@ -1,28 +1,19 @@
 [build-system]
-requires = ["setuptools>=75"]
+requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "jzbot-v2"
-version = "2.0.0"
+name = "jzbot"
+version = "4.0.0"
+description = "Clean-slate Telegram Business USDT bookkeeping bot"
 requires-python = ">=3.12"
-dependencies = ["python-telegram-bot==22.8", "aiosqlite==0.22.1", "tzdata==2026.5; sys_platform == 'win32'"]
-
-[project.scripts]
-jzbot-v2 = "jzbot.app:main"
+dependencies = [
+    "python-telegram-bot==22.8",
+]
 
 [tool.setuptools.packages.find]
 include = ["jzbot*"]
 
 [tool.pytest.ini_options]
-asyncio_mode = "auto"
 testpaths = ["tests"]
-pythonpath = [".", "tests"]
-addopts = "--basetemp=.pytest_tmp"
-
-[tool.ruff]
-target-version = "py312"
-extend-exclude = [".github-publish", ".pytest_tmp", ".venv"]
-
-[tool.ruff.lint]
-select = ["E4", "E7", "E9", "F", "I"]
+asyncio_mode = "auto"

@@ -1,3 +1,3 @@
-"""JZBot V2: importing this package never constructs or starts a bot."""
+"""JZBot — Telegram Business USDT bookkeeping bot."""
 
-__version__ = "2.0.0"
+__version__ = "4.0.0"
