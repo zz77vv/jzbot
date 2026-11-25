@@ -31,6 +31,7 @@ def test_formatting_and_html_receipt():
     assert fmt_num(12345) == "1,234.5"
     assert fmt_money(-500) == "-50 USDT"
     html = build_receipt_html(kind="in", amount_tenths=1000, balance_after=2500, journal_id=42, note="换U")
-    assert "入账 +100 USDT" in html
+    assert "<blockquote>" in html
+    assert "+100 USDT" in html
     assert "换U" in html
     assert "#42" in html

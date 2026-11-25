@@ -146,12 +146,13 @@ def build_receipt_html(
     note: str = "",
     unit: str = "USDT",
 ) -> str:
-    note_str = f"（{esc(note)}）" if note else ""
-    ref = f"\n🔖 流水 <code>#{journal_id}</code>" if journal_id else ""
+    note_str = f"  ·  {esc(note)}" if note else ""
+    ref = f"  ·  <code>#{journal_id}</code>" if journal_id else ""
+    bal_sign = "+" if balance_after > 0 else ""
     if kind == "in":
-        return f"🟢 <b>入账 +{fmt_money(amount_tenths, unit)}</b>{note_str}\n💰 当前余额：<b>{fmt_money(balance_after, unit)}</b>{ref}"
+        return f"<blockquote><b>入账  <code>+{fmt_money(amount_tenths, unit)}</code></b>{note_str}\n当前余额　<b><code>{bal_sign}{fmt_money(balance_after, unit)}</code></b>{ref}</blockquote>"
     if kind == "out":
-        return f"🔴 <b>出账 -{fmt_money(amount_tenths, unit)}</b>{note_str}\n💰 当前余额：<b>{fmt_money(balance_after, unit)}</b>{ref}"
+        return f"<blockquote><b>出账  <code>-{fmt_money(amount_tenths, unit)}</code></b>{note_str}\n当前余额　<b><code>{bal_sign}{fmt_money(balance_after, unit)}</code></b>{ref}</blockquote>"
     if kind == "void":
-        return f"↩️ <b>已撤销上一笔</b>{note_str}\n💰 当前余额：<b>{fmt_money(balance_after, unit)}</b>{ref}"
-    return f"🧹 <b>账本已结清归零</b>\n💰 当前余额：<b>0 {esc(unit)}</b>{ref}"
+        return f"<blockquote><b>已撤销上一笔</b>{note_str}\n当前余额　<b><code>{bal_sign}{fmt_money(balance_after, unit)}</code></b>{ref}</blockquote>"
+    return f"<blockquote><b>账本已结清</b>\n当前余额　<b><code>0 {esc(unit)}</code></b>{ref}</blockquote>"

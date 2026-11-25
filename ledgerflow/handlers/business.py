@@ -9,8 +9,9 @@ from aiogram.enums import ChatType, ParseMode
 from aiogram.exceptions import TelegramAPIError
 from aiogram.types import BusinessConnection, Message, ReplyParameters
 
-from ledgerflow.domain import esc, fmt_local_dt, fmt_money, parse_chat_intent
+from ledgerflow.domain import esc, fmt_money, parse_chat_intent
 from ledgerflow.repository import LedgerRepository
+from ledgerflow.ui import format_tx_line
 from ledgerflow.workers import ReceiptDispatcher
 
 logger = logging.getLogger(__name__)
@@ -20,40 +21,22 @@ def render_statement_card(repo: LedgerRepository, owner_id: int, chat_id: int, t
     c = repo.get_contact(owner_id, chat_id)
     unit = repo.currency_unit
     if not c or not c.has_ledger:
-        return f"📋 <b>客户对账单</b>\n💰 当前余额：<b>0 {esc(unit)}</b>\n<i>暂无记账流水</i>"
+        return f"<b>客户对账单</b>\n\n<blockquote>当前余额　<b><code>0 {esc(unit)}</code></b>\n<i>暂无记账流水</i></blockquote>"
 
     txs, total = repo.get_journal(owner_id, chat_id, limit=8, offset=0)
-    header = f"📋 <b>{esc(c.label)}</b>"
-    if c.tags:
-        header += "  " + " ".join(f"<code>#{esc(t)}</code>" for t in c.tags)
-    lines = [
-        header,
-        f"💰 当前余额：<b>{fmt_money(c.balance_tenths, unit)}</b>",
-        f"📈 累计入账：{fmt_money(c.total_in_tenths, unit)}  |  📉 累计出账：{fmt_money(c.total_out_tenths, unit)}",
-    ]
+    bal_sign = "+" if c.balance_tenths > 0 else ""
+    tag_line = ("  " + " ".join(f"<code>#{esc(t)}</code>" for t in c.tags)) if c.tags else ""
+    summary = (
+        f"<b>{esc(c.label)}</b>{tag_line}\n\n"
+        "<blockquote><b>账本摘要</b>\n"
+        f"当前余额　<b><code>{bal_sign}{fmt_money(c.balance_tenths, unit)}</code></b>\n"
+        f"累计入账　<code>+{fmt_money(c.total_in_tenths, unit)}</code>  ·  累计出账　<code>-{fmt_money(c.total_out_tenths, unit)}</code></blockquote>"
+    )
     if not txs:
-        lines.append("<i>暂无流水记录</i>")
-        return "\n".join(lines)
+        return summary + "\n\n<blockquote><i>暂无流水记录</i></blockquote>"
 
-    lines.append(f"\n<b>最近 {len(txs)} 条流水（共 {total} 条）：</b>")
-    for tx in txs:
-        ts = fmt_local_dt(tx.created_at, tz_offset)
-        note_str = f" · {esc(tx.note)}" if tx.note else ""
-        if tx.kind == "in":
-            op = f"+{fmt_money(tx.amount_tenths, unit)}"
-        elif tx.kind == "out":
-            op = f"-{fmt_money(tx.amount_tenths, unit)}"
-        elif tx.kind == "void":
-            op = f"↩️ 撤销 ({'+' if tx.delta_tenths >= 0 else ''}{fmt_money(tx.delta_tenths, unit)})"
-        elif tx.kind == "settle":
-            op = "🧹 清账归零"
-        else:
-            op = f"✏️ 调账 ({'+' if tx.delta_tenths >= 0 else ''}{fmt_money(tx.delta_tenths, unit)})"
-        row_txt = f"<code>{ts}</code> | {op}{note_str} → <b>{fmt_money(tx.balance_after, unit)}</b>"
-        if tx.voided_by_id:
-            row_txt = f"<s>{row_txt}</s>"
-        lines.append(row_txt)
-    return "\n".join(lines)
+    tx_lines = "\n".join(format_tx_line(tx, unit, tz_offset) for tx in txs)
+    return summary + f"\n\n<blockquote expandable><b>最近 {len(txs)} 笔流水（共 {total} 笔 · 点击展开）</b>\n{tx_lines}</blockquote>"
 
 
 def create_business_router(repo: LedgerRepository, receipts: ReceiptDispatcher, tz_offset: int = 8) -> Router:

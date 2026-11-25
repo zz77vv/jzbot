@@ -8,6 +8,7 @@ from aiogram import Dispatcher
 from ledgerflow.handlers.admin import create_admin_router
 from ledgerflow.handlers.business import create_business_router, render_statement_card
 from ledgerflow.repository import LedgerRepository
+from ledgerflow.ui import render_contact_detail_view, render_home_view
 from ledgerflow.workers import AnnouncementDispatcher, ReceiptDispatcher
 
 
@@ -27,5 +28,18 @@ def test_routers_wire_into_dispatcher_and_render_statement(tmp_path: Path):
         card = render_statement_card(repo, 1, 20)
         assert "50 USDT" in card
         assert "测试单" in card
+        assert "<blockquote expandable>" in card
+
+        home_txt, home_kb = render_home_view(repo.get_dashboard(1))
+        assert "LEDGERFLOW" in home_txt
+        assert home_kb.inline_keyboard[0][0].style == "success"
+        assert home_kb.inline_keyboard[0][1].style == "danger"
+        assert home_kb.inline_keyboard[0][2].style == "primary"
+
+        c = repo.get_contact(1, 20)
+        txs, _ = repo.get_journal(1, 20, limit=3)
+        dt_txt, dt_kb = render_contact_detail_view(c, txs, "lst:all:0")
+        assert "<blockquote expandable>" in dt_txt
+        assert any(b.copy_text and b.copy_text.text == "20" for row in dt_kb.inline_keyboard for b in row)
     finally:
         repo.close()
