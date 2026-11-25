@@ -3,17 +3,18 @@ requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "jzbot"
-version = "4.0.0"
-description = "Clean-slate Telegram Business USDT bookkeeping bot"
+name = "ledgerflow"
+version = "1.0.0"
+description = "Modern Telegram Business USDT Bookkeeping System built on aiogram 3"
 requires-python = ">=3.12"
 dependencies = [
-    "python-telegram-bot==22.8",
+    "aiogram>=3.15,<4",
 ]
 
 [tool.setuptools.packages.find]
-include = ["jzbot*"]
+include = ["ledgerflow*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
