@@ -336,11 +336,15 @@ def render_settings_view(d: DashboardStats) -> tuple[str, InlineKeyboardMarkup]:
         f"{tg_emoji(SETTINGS)} <b>系统维护与设置</b>\n\n"
         "<blockquote><b>运行状态</b>\n"
         f"待发回执数　<code>{d.pending_receipts}</code> 条\n"
-        f"回执自动置顶　<code>{'已开启' if d.auto_pin else '已关闭'}</code></blockquote>"
+        f"回执自动置顶　<code>{'已开启' if d.auto_pin else '已关闭'}</code>\n"
+        f"每日财务日报　<code>{'已开启（23:55）' if d.daily_report else '已关闭'}</code></blockquote>"
     )
     kb = InlineKeyboardMarkup(
         inline_keyboard=[
-            [btn_primary(f"自动置顶：{'开' if d.auto_pin else '关'}（点击切换）", "cfg:pin", icon=PIN_MSG)],
+            [
+                btn_primary(f"自动置顶：{'开' if d.auto_pin else '关'}", "cfg:pin", icon=PIN_MSG),
+                btn_primary(f"每日日报：{'开' if d.daily_report else '关'}", "cfg:report", icon=CALENDAR),
+            ],
             [
                 btn(f"待发回执 ({d.pending_receipts})", "rcpt:0", icon=MAIL),
                 btn("立即重试回执", "rcpt_retry", icon=REFRESH),
@@ -355,6 +359,56 @@ def render_settings_view(d: DashboardStats) -> tuple[str, InlineKeyboardMarkup]:
             ],
         ]
     )
+    return (text, kb)
+
+
+def render_quick_adjust_view(c: Contact, unit: str = "USDT") -> tuple[str, InlineKeyboardMarkup]:
+    bal_sign = "+" if c.balance_tenths > 0 else ""
+    text = (
+        f"{tg_emoji(EDIT)} <b>后台调账</b>  ·  {esc(c.label)}\n\n"
+        f"<blockquote>当前余额　<b><code>{bal_sign}{fmt_money(c.balance_tenths, unit)}</code></b>\n"
+        "可点击下方快捷金额一键入账/出账，或直接发送如 <code>+50 补差</code> / <code>-20 扣费</code>（仅内部记账不发客户回执）：</blockquote>"
+    )
+    kb = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                btn_success("+10", f"qadj:{c.chat_id}:100", icon=UP),
+                btn_success("+50", f"qadj:{c.chat_id}:500", icon=UP),
+                btn_success("+100", f"qadj:{c.chat_id}:1000", icon=UP),
+            ],
+            [
+                btn_danger("-10", f"qadj:{c.chat_id}:-100", icon=DOWN),
+                btn_danger("-50", f"qadj:{c.chat_id}:-500", icon=DOWN),
+                btn_danger("-100", f"qadj:{c.chat_id}:-1000", icon=DOWN),
+            ],
+            [btn("取消", f"ct:{c.chat_id}", icon=NO)],
+        ]
+    )
+    return (text, kb)
+
+
+def render_daily_digest_view(
+    local_date: str,
+    rep: FinancialReport,
+    d: DashboardStats,
+    unit: str = "USDT",
+) -> tuple[str, InlineKeyboardMarkup]:
+    net_flow_sign = "+" if rep.net_flow >= 0 else ""
+    total_net = d.positive_sum + d.debt_sum
+    total_net_sign = "+" if total_net >= 0 else ""
+    text = (
+        f"{tg_emoji(CALENDAR)} <b>每日财务日报</b>  ·  <code>{esc(local_date)}</code>\n\n"
+        "<blockquote><b>今日收支汇总</b>\n"
+        f"{tg_emoji(UP)} 今日入账　<code>+{fmt_money(rep.total_in, unit)}</code>\n"
+        f"{tg_emoji(DOWN)} 今日出账　<code>-{fmt_money(rep.total_out, unit)}</code>\n"
+        f"{tg_emoji(DIAMOND)} 今日净流　<b><code>{net_flow_sign}{fmt_money(rep.net_flow, unit)}</code></b>\n"
+        f"有效笔数 <code>{rep.tx_count}</code> 笔  ·  活跃客户 <code>{rep.active_contacts}</code> 人</blockquote>\n\n"
+        "<blockquote><b>当前资产盘点</b>\n"
+        f"存款总额　<code>+{fmt_money(d.positive_sum, unit)}</code>  ({d.positive_count}人)\n"
+        f"欠款总额　<code>{fmt_money(d.debt_sum, unit)}</code>  ({d.debt_count}人)\n"
+        f"资金净值　<b><code>{total_net_sign}{fmt_money(total_net, unit)}</code></b></blockquote>"
+    )
+    kb = InlineKeyboardMarkup(inline_keyboard=[[btn_primary("打开总控台", "home", icon=HOME)]])
     return (text, kb)
 
 

@@ -114,6 +114,7 @@ class DashboardStats:
     today_tx_count: int
     pending_receipts: int
     auto_pin: bool
+    daily_report: bool = True
 
 
 @dataclass(frozen=True)
@@ -319,6 +320,30 @@ class LedgerRepository:
             new_val = 0 if (row and int(row["auto_pin"]) == 1) else 1
             conn.execute("UPDATE accounts SET auto_pin = ?, updated_at = ? WHERE owner_id = ?", (new_val, now, owner_id))
             return bool(new_val)
+
+    def toggle_daily_report(self, owner_id: int) -> bool:
+        now = utc_now_iso()
+        with self._tx() as conn:
+            row = conn.execute("SELECT daily_report FROM accounts WHERE owner_id = ?", (owner_id,)).fetchone()
+            new_val = 0 if (row and int(row["daily_report"]) == 1) else 1
+            conn.execute("UPDATE accounts SET daily_report = ?, updated_at = ? WHERE owner_id = ?", (new_val, now, owner_id))
+            return bool(new_val)
+
+    def list_owners_due_daily_report(self, local_date: str) -> list[int]:
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT owner_id FROM accounts WHERE daily_report = 1 AND last_report_date != ?",
+                (local_date,),
+            ).fetchall()
+            return [int(r["owner_id"]) for r in rows]
+
+    def mark_daily_report_sent(self, owner_id: int, local_date: str) -> None:
+        now = utc_now_iso()
+        with self._tx() as conn:
+            conn.execute(
+                "UPDATE accounts SET last_report_date = ?, updated_at = ? WHERE owner_id = ?",
+                (local_date, now, owner_id),
+            )
 
     def get_link(self, link_id: str) -> tuple[int, bool] | None:
         with self._lock:
@@ -845,7 +870,7 @@ class LedgerRepository:
                 (owner_id, today_utc),
             ).fetchone()
             pend = int(self._conn.execute("SELECT COUNT(*) FROM receipts WHERE owner_id = ? AND status = 'pending'", (owner_id,)).fetchone()[0])
-            acc = self._conn.execute("SELECT auto_pin FROM accounts WHERE owner_id = ?", (owner_id,)).fetchone()
+            acc = self._conn.execute("SELECT auto_pin, daily_report FROM accounts WHERE owner_id = ?", (owner_id,)).fetchone()
             return DashboardStats(
                 total_contacts=int(s["total"] or 0),
                 positive_count=int(s["pos_c"] or 0),
@@ -858,6 +883,7 @@ class LedgerRepository:
                 today_tx_count=int(t["cnt"] or 0),
                 pending_receipts=pend,
                 auto_pin=bool(acc["auto_pin"]) if acc else True,
+                daily_report=bool(acc["daily_report"]) if acc else True,
             )
 
     def get_financial_report(self, owner_id: int, period: Literal["today", "week", "month", "all"], tz_offset_hours: int = 8) -> FinancialReport:

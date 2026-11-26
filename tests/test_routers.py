@@ -8,7 +8,13 @@ from aiogram import Dispatcher
 from ledgerflow.handlers.admin import create_admin_router
 from ledgerflow.handlers.business import create_business_router, render_statement_card
 from ledgerflow.repository import LedgerRepository
-from ledgerflow.ui import render_contact_detail_view, render_home_view, strip_button_icons
+from ledgerflow.ui import (
+    render_contact_detail_view,
+    render_daily_digest_view,
+    render_home_view,
+    render_quick_adjust_view,
+    strip_button_icons,
+)
 from ledgerflow.workers import AnnouncementDispatcher, ReceiptDispatcher
 
 
@@ -51,5 +57,12 @@ def test_routers_wire_into_dispatcher_and_render_statement(tmp_path: Path):
         assert "#1" in dt_txt
         assert all("撤销" not in b.text and "导出" not in b.text for row in dt_kb.inline_keyboard for b in row)
         assert any(b.copy_text and b.copy_text.text == "20" for row in dt_kb.inline_keyboard for b in row)
+
+        qa_txt, qa_kb = render_quick_adjust_view(c)
+        assert "后台调账" in qa_txt
+        assert any(b.callback_data == "qadj:20:500" for row in qa_kb.inline_keyboard for b in row)
+
+        digest_txt, _ = render_daily_digest_view("2026-11-26", repo.get_financial_report(1, "today"), repo.get_dashboard(1))
+        assert "每日财务日报" in digest_txt and "50 USDT" in digest_txt
     finally:
         repo.close()

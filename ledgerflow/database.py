@@ -18,6 +18,8 @@ CREATE TABLE IF NOT EXISTS accounts (
     owner_id        INTEGER PRIMARY KEY,
     welcomed        INTEGER NOT NULL DEFAULT 0 CHECK(welcomed IN (0, 1)),
     auto_pin        INTEGER NOT NULL DEFAULT 1 CHECK(auto_pin IN (0, 1)),
+    daily_report    INTEGER NOT NULL DEFAULT 1 CHECK(daily_report IN (0, 1)),
+    last_report_date TEXT NOT NULL DEFAULT '',
     created_at      TEXT NOT NULL,
     updated_at      TEXT NOT NULL
 );
@@ -172,6 +174,11 @@ def open_database(path: Path) -> sqlite3.Connection:
     conn.execute("PRAGMA temp_store = MEMORY")
     conn.execute("PRAGMA mmap_size = 67108864")
     conn.executescript(DDL)
+    cols = {str(r[1]) for r in conn.execute("PRAGMA table_info(accounts)").fetchall()}
+    if "daily_report" not in cols:
+        conn.execute("ALTER TABLE accounts ADD COLUMN daily_report INTEGER NOT NULL DEFAULT 1 CHECK(daily_report IN (0, 1))")
+    if "last_report_date" not in cols:
+        conn.execute("ALTER TABLE accounts ADD COLUMN last_report_date TEXT NOT NULL DEFAULT ''")
     conn.execute("INSERT OR IGNORE INTO meta(k, v) VALUES ('schema_version', ?)", (SCHEMA_VERSION,))
     if os.name == "posix":
         try:

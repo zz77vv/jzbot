@@ -109,5 +109,14 @@ def test_crm_alias_tags_reports_and_csv_export(tmp_path: Path):
             assert b_repo.get_contact(1, 101).balance_tenths == 4500
         finally:
             b_repo.close()
+
+        # Daily report toggle & due listing
+        assert repo.list_owners_due_daily_report("2026-11-26") == [1]
+        repo.mark_daily_report_sent(1, "2026-11-26")
+        assert repo.list_owners_due_daily_report("2026-11-26") == []
+        assert repo.toggle_daily_report(1) is False
+        assert repo.list_owners_due_daily_report("2026-11-27") == []
+        assert repo.toggle_daily_report(1) is True
+        assert repo.list_owners_due_daily_report("2026-11-27") == [1]
     finally:
         repo.close()
