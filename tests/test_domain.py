@@ -42,6 +42,7 @@ def test_formatting_and_html_receipt():
     assert fmt_money(-500) == "-50 USDT"
     html = build_receipt_html(kind="in", amount_tenths=1000, balance_after=2500, journal_id=42, note="换U")
     assert "<blockquote>" in html
+    assert '<tg-emoji emoji-id="5244837092042750681">' in html
     assert "+100 USDT" in html
     assert "换U" in html
     assert "#42" not in html

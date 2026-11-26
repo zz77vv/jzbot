@@ -18,6 +18,7 @@ from aiogram.filters import CommandStart
 from aiogram.types import CallbackQuery, InlineKeyboardMarkup, Message
 
 from ledgerflow.domain import esc, fmt_money, parse_chat_intent
+from ledgerflow.emojis import ANNOUNCE, NO, OK, SEARCH, TAG, tg_emoji
 from ledgerflow.repository import LedgerRepository
 from ledgerflow.ui import (
     btn,
@@ -33,6 +34,7 @@ from ledgerflow.ui import (
     render_report_view,
     render_search_view,
     render_settings_view,
+    strip_button_icons,
 )
 from ledgerflow.workers import AnnouncementDispatcher, ReceiptDispatcher
 
@@ -106,6 +108,20 @@ def create_admin_router(
         back_cb = last_list_cb.get(owner_id, "lst:all:0")
         return render_contact_detail_view(c, recent, back_cb, repo.currency_unit, tz_offset)
 
+    def _is_icon_rejected(exc: TelegramBadRequest) -> bool:
+        msg = str(exc).lower()
+        return any(k in msg for k in ("icon", "emoji", "premium", "forbidden"))
+
+    async def send_html(message: Message, text: str, kb: InlineKeyboardMarkup) -> None:
+        try:
+            await message.answer(text, parse_mode=ParseMode.HTML, reply_markup=kb)
+        except TelegramBadRequest as exc:
+            if _is_icon_rejected(exc):
+                logger.warning("Button custom emoji rejected on send, falling back: %s", exc)
+                await message.answer(text, parse_mode=ParseMode.HTML, reply_markup=strip_button_icons(kb))
+            else:
+                raise
+
     async def safe_edit(cb: CallbackQuery, text: str, kb: InlineKeyboardMarkup, *, answer: bool = True) -> None:
         if answer:
             await cb.answer()
@@ -113,8 +129,18 @@ def create_admin_router(
             try:
                 await cb.message.edit_text(text=text, parse_mode=ParseMode.HTML, reply_markup=kb)
             except TelegramBadRequest as exc:
-                if "message is not modified" not in str(exc).lower():
-                    raise
+                low = str(exc).lower()
+                if "message is not modified" in low:
+                    return
+                if _is_icon_rejected(exc):
+                    logger.warning("Button custom emoji rejected on edit, falling back: %s", exc)
+                    try:
+                        await cb.message.edit_text(text=text, parse_mode=ParseMode.HTML, reply_markup=strip_button_icons(kb))
+                    except TelegramBadRequest as exc2:
+                        if "message is not modified" not in str(exc2).lower():
+                            raise
+                    return
+                raise
 
     async def locate_contact(bot: Bot, owner_id: int, chat_id: int) -> tuple[bool, str]:
         for link_id, enabled in repo.list_owner_links(owner_id, limit=8):
@@ -154,7 +180,7 @@ def create_admin_router(
             return
         prompts.pop(message.from_user.id, None)
         text, kb = render_home(message.from_user.id)
-        await message.answer(text, parse_mode=ParseMode.HTML, reply_markup=kb)
+        await send_html(message, text, kb)
 
     @router.message(F.chat.type == ChatType.PRIVATE, F.text)
     async def on_text_input(message: Message) -> None:
@@ -177,7 +203,7 @@ def create_admin_router(
             last_list_cb[owner_id] = "spage:0"
             items, total = repo.search_contacts(owner_id, raw, limit=PAGE_SIZE, offset=0)
             text, kb = render_search_view(raw, items, total, 0, PAGE_SIZE, repo.currency_unit)
-            await message.answer(text, parse_mode=ParseMode.HTML, reply_markup=kb)
+            await send_html(message, text, kb)
             return
 
         if prompt.kind == "alias":
@@ -185,7 +211,7 @@ def create_admin_router(
             val = None if raw in ("清除", "删除", "-") else raw
             repo.set_alias(owner_id, prompt.target_chat_id, val)
             text, kb = render_contact_card(owner_id, prompt.target_chat_id)
-            await message.answer(text, parse_mode=ParseMode.HTML, reply_markup=kb)
+            await send_html(message, text, kb)
             return
 
         if prompt.kind == "tags":
@@ -193,7 +219,7 @@ def create_admin_router(
             tags = [] if raw in ("清除", "清空", "-") else [t for t in raw.replace("，", ",").replace(" ", ",").split(",") if t.strip()]
             repo.set_tags(owner_id, prompt.target_chat_id, tags)
             text, kb = render_contact_card(owner_id, prompt.target_chat_id)
-            await message.answer(text, parse_mode=ParseMode.HTML, reply_markup=kb)
+            await send_html(message, text, kb)
             return
 
         if prompt.kind == "adjust":
@@ -205,7 +231,7 @@ def create_admin_router(
             delta = intent.amount_tenths if intent.kind == "in" else -intent.amount_tenths
             repo.admin_adjust(owner_id=owner_id, chat_id=prompt.target_chat_id, delta_tenths=delta, note=intent.note or "后台调账")
             text, kb = render_contact_card(owner_id, prompt.target_chat_id)
-            await message.answer(f"<i>已记录后台调账</i>\n\n{text}", parse_mode=ParseMode.HTML, reply_markup=kb)
+            await send_html(message, f"<i>已记录后台调账</i>\n\n{text}", kb)
             return
 
         if prompt.kind == "announce_body":
@@ -230,15 +256,15 @@ def create_admin_router(
             ann_drafts[owner_id] = draft
             top5 = "、".join(esc(c.label) for c in targets[:5])
             preview = (
-                "<b>定向通知预览</b>  ·  <i>5 分钟内有效</i>\n\n"
+                f"{tg_emoji(ANNOUNCE)} <b>定向通知预览</b>  ·  <i>5 分钟内有效</i>\n\n"
                 f"<blockquote>目标人数　<b><code>{len(targets)}</code></b> 人\n"
                 f"前 5 位　{top5}</blockquote>\n\n"
                 f"<blockquote><b>正文内容</b>\n{esc(message.text)}</blockquote>"
             )
             kb = InlineKeyboardMarkup(
-                inline_keyboard=[[btn_success("确认发送", "ann:confirm"), btn_danger("取消", "home")]]
+                inline_keyboard=[[btn_success("确认发送", "ann:confirm", icon=OK), btn_danger("取消", "home", icon=NO)]]
             )
-            await message.answer(preview, parse_mode=ParseMode.HTML, reply_markup=kb)
+            await send_html(message, preview, kb)
 
     @router.callback_query()
     async def on_callback(cb: CallbackQuery, bot: Bot) -> None:
@@ -275,16 +301,16 @@ def create_admin_router(
                 return
             rows = []
             for i in range(0, len(tags), 2):
-                rows.append([btn(f"#{t}", f"lst:tag:{t}:0") for t in tags[i : i + 2]])
+                rows.append([btn(f"#{t}", f"lst:tag:{t}:0", icon=TAG) for t in tags[i : i + 2]])
             rows.append([btn("返回首页", "home")])
-            await safe_edit(cb, "<b>按标签筛选客户</b>\n\n<blockquote>选择一个标签查看对应分组：</blockquote>", InlineKeyboardMarkup(inline_keyboard=rows))
+            await safe_edit(cb, f"{tg_emoji(TAG)} <b>按标签筛选客户</b>\n\n<blockquote>选择一个标签查看对应分组：</blockquote>", InlineKeyboardMarkup(inline_keyboard=rows))
             return
 
         if act == "search":
             prompts[owner_id] = PendingPrompt(kind="search")
             await safe_edit(
                 cb,
-                "<b>搜索客户</b>\n\n<blockquote>请直接发送<b>别名 / 标签 / 姓名 / @用户名 / 数字 ID</b>：</blockquote>",
+                f"{tg_emoji(SEARCH)} <b>搜索客户</b>\n\n<blockquote>请直接发送<b>别名 / 标签 / 姓名 / @用户名 / 数字 ID</b>：</blockquote>",
                 InlineKeyboardMarkup(inline_keyboard=[[btn("取消", "home")]]),
             )
             return

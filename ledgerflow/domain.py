@@ -8,6 +8,8 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import Literal
 
+from ledgerflow.emojis import DOWN, OK, REFRESH, UP, tg_emoji
+
 # 1 internal unit = 0.1 USDT. Max 15 integer digits safely fits SQLite signed INT64.
 MAX_INT_DIGITS = 15
 MAX_SAFE_TENTHS = 9_000_000_000_000_000_000
@@ -151,9 +153,9 @@ def build_receipt_html(
     note_str = f"  ·  {esc(note)}" if note else ""
     bal_sign = "+" if balance_after > 0 else ""
     if kind == "in":
-        return f"<blockquote><b>入账  <code>+{fmt_money(amount_tenths, unit)}</code></b>{note_str}\n当前余额　<b><code>{bal_sign}{fmt_money(balance_after, unit)}</code></b></blockquote>"
+        return f"<blockquote>{tg_emoji(UP)} <b>入账  <code>+{fmt_money(amount_tenths, unit)}</code></b>{note_str}\n当前余额　<b><code>{bal_sign}{fmt_money(balance_after, unit)}</code></b></blockquote>"
     if kind == "out":
-        return f"<blockquote><b>出账  <code>-{fmt_money(amount_tenths, unit)}</code></b>{note_str}\n当前余额　<b><code>{bal_sign}{fmt_money(balance_after, unit)}</code></b></blockquote>"
+        return f"<blockquote>{tg_emoji(DOWN)} <b>出账  <code>-{fmt_money(amount_tenths, unit)}</code></b>{note_str}\n当前余额　<b><code>{bal_sign}{fmt_money(balance_after, unit)}</code></b></blockquote>"
     if kind == "void":
-        return f"<blockquote><b>已撤销上一笔</b>{note_str}\n当前余额　<b><code>{bal_sign}{fmt_money(balance_after, unit)}</code></b></blockquote>"
-    return f"<blockquote><b>账本已结清</b>\n当前余额　<b><code>0 {esc(unit)}</code></b></blockquote>"
+        return f"<blockquote>{tg_emoji(REFRESH)} <b>已撤销上一笔</b>{note_str}\n当前余额　<b><code>{bal_sign}{fmt_money(balance_after, unit)}</code></b></blockquote>"
+    return f"<blockquote>{tg_emoji(OK)} <b>账本已结清</b>\n当前余额　<b><code>0 {esc(unit)}</code></b></blockquote>"
