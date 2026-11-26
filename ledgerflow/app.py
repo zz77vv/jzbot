@@ -13,7 +13,7 @@ from ledgerflow.config import AppConfig, ProcessLock
 from ledgerflow.handlers.admin import create_admin_router
 from ledgerflow.handlers.business import create_business_router
 from ledgerflow.repository import LedgerRepository
-from ledgerflow.workers import AnnouncementDispatcher, DailyReportDispatcher, ReceiptDispatcher
+from ledgerflow.workers import AnnouncementDispatcher, ReceiptDispatcher
 
 logger = logging.getLogger(__name__)
 
@@ -46,7 +46,6 @@ async def run_async(cfg: AppConfig) -> None:
 
     receipts = ReceiptDispatcher(repo, bot)
     announcer = AnnouncementDispatcher(repo, bot)
-    daily_reports = DailyReportDispatcher(repo, bot, cfg.tz_offset_hours)
 
     dp.include_router(create_business_router(repo, receipts, cfg.tz_offset_hours))
     dp.include_router(create_admin_router(repo, receipts, announcer, cfg.backup_dir, cfg.tz_offset_hours))
@@ -58,11 +57,9 @@ async def run_async(cfg: AppConfig) -> None:
         await bot.set_my_commands([BotCommand(command="start", description="打开记账财务总控台")])
         receipts.start()
         announcer.start()
-        daily_reports.start()
 
     @dp.shutdown()
     async def on_shutdown() -> None:
-        await daily_reports.stop()
         await announcer.stop()
         await receipts.stop()
         repo.close()

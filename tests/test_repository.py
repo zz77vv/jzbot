@@ -1,8 +1,7 @@
-"""Tests for LedgerRepository: memos, undo/void, alias/tags, reports, CSV export, backup."""
+"""Tests for LedgerRepository: memos, undo/void, alias/tags, reports, backup."""
 
 from pathlib import Path
 
-from ledgerflow.export import export_contacts_csv, export_journal_csv
 from ledgerflow.repository import LedgerRepository
 
 
@@ -93,14 +92,6 @@ def test_crm_alias_tags_reports_and_csv_export(tmp_path: Path):
         assert rep.net_flow == 3300
         assert rep.active_contacts == 2
 
-        # CSV export (UTF-8 BOM)
-        csv_bal = export_contacts_csv(repo.list_all_contacts_for_export(1))
-        assert csv_bal.startswith(b"\xef\xbb\xbf")
-        assert "大客户老王".encode("utf-8") in csv_bal
-
-        csv_j = export_journal_csv(repo.get_all_journal_for_export(1))
-        assert "手动调减".encode("utf-8") in csv_j
-
         # Hot backup
         bak = repo.hot_backup(tmp_path / "bak" / "lf-hot.db")
         b_repo = LedgerRepository(bak)
@@ -109,14 +100,5 @@ def test_crm_alias_tags_reports_and_csv_export(tmp_path: Path):
             assert b_repo.get_contact(1, 101).balance_tenths == 4500
         finally:
             b_repo.close()
-
-        # Daily report toggle & due listing
-        assert repo.list_owners_due_daily_report("2026-11-26") == [1]
-        repo.mark_daily_report_sent(1, "2026-11-26")
-        assert repo.list_owners_due_daily_report("2026-11-26") == []
-        assert repo.toggle_daily_report(1) is False
-        assert repo.list_owners_due_daily_report("2026-11-27") == []
-        assert repo.toggle_daily_report(1) is True
-        assert repo.list_owners_due_daily_report("2026-11-27") == [1]
     finally:
         repo.close()

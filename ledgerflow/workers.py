@@ -5,7 +5,6 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
-from datetime import datetime, timedelta, timezone
 
 from aiogram import Bot
 from aiogram.enums import ParseMode
@@ -237,78 +236,3 @@ class AnnouncementDispatcher:
         except TelegramAPIError as exc:
             self.repo.finish_delivery(dlv.id, "failed", error_text=f"{type(exc).__name__}: {exc}")
         return True
-
-
-class DailyReportDispatcher:
-    """Sends a daily financial digest to opted-in owners at 23:55 local time."""
-
-    def __init__(self, repo: LedgerRepository, bot: Bot, tz_offset: int = 8) -> None:
-        self.repo = repo
-        self.bot = bot
-        self.tz_offset = tz_offset
-        self._stop = asyncio.Event()
-        self._task: asyncio.Task[None] | None = None
-
-    def start(self) -> None:
-        if self._task is None or self._task.done():
-            self._stop.clear()
-            self._task = asyncio.create_task(self._loop(), name="ledgerflow-daily-report")
-
-    async def stop(self) -> None:
-        self._stop.set()
-        if self._task is not None:
-            self._task.cancel()
-            try:
-                await self._task
-            except asyncio.CancelledError:
-                pass
-            self._task = None
-
-    async def _loop(self) -> None:
-        while not self._stop.is_set():
-            try:
-                now_utc = datetime.now(timezone.utc)
-                local_dt = now_utc.astimezone(timezone(timedelta(hours=self.tz_offset)))
-                if local_dt.hour == 23 and local_dt.minute >= 55:
-                    await self.run_due_once(now_utc)
-            except asyncio.CancelledError:
-                raise
-            except Exception:
-                logger.exception("DailyReportDispatcher loop error")
-            try:
-                await asyncio.wait_for(self._stop.wait(), timeout=30.0)
-            except asyncio.TimeoutError:
-                pass
-
-    async def run_due_once(self, now_utc: datetime | None = None) -> int:
-        from ledgerflow.ui import render_daily_digest_view, strip_button_icons
-
-        now = now_utc or datetime.now(timezone.utc)
-        local_date = now.astimezone(timezone(timedelta(hours=self.tz_offset))).strftime("%Y-%m-%d")
-        due_owners = self.repo.list_owners_due_daily_report(local_date)
-        sent = 0
-        for oid in due_owners:
-            if self._stop.is_set():
-                break
-            rep = self.repo.get_financial_report(oid, "today", self.tz_offset)
-            dash = self.repo.get_dashboard(oid, self.tz_offset)
-            text, kb = render_daily_digest_view(local_date, rep, dash, self.repo.currency_unit)
-            try:
-                try:
-                    await self.bot.send_message(chat_id=oid, text=text, parse_mode=ParseMode.HTML, reply_markup=kb)
-                except TelegramBadRequest as exc:
-                    msg = str(exc).lower()
-                    if any(k in msg for k in ("icon", "emoji", "premium", "forbidden")):
-                        await self.bot.send_message(
-                            chat_id=oid,
-                            text=text,
-                            parse_mode=ParseMode.HTML,
-                            reply_markup=strip_button_icons(kb),
-                        )
-                    else:
-                        raise
-                self.repo.mark_daily_report_sent(oid, local_date)
-                sent += 1
-            except TelegramAPIError as exc:
-                logger.warning("Daily report failed for owner %s: %s", oid, exc)
-        return sent

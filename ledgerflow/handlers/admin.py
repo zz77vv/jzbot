@@ -30,7 +30,6 @@ from ledgerflow.ui import (
     render_contact_list_view,
     render_history_view,
     render_home_view,
-    render_quick_adjust_view,
     render_receipts_view,
     render_report_view,
     render_search_view,
@@ -190,10 +189,9 @@ def create_admin_router(
         owner_id = message.from_user.id
         if not repo.is_owner(owner_id):
             return
-        prompt = prompts.get(owner_id)
         raw = message.text.strip()
         if prompt is None:
-            if not raw or raw.startswith("/") or raw == "@" or len(raw) > 64:
+            if raw.startswith("/") or not raw or raw == "@" or len(raw) > 64:
                 return
             last_search[owner_id] = raw
             last_list_cb[owner_id] = "spage:0"
@@ -372,25 +370,40 @@ def create_admin_router(
 
         if act == "adj" and len(parts) == 2:
             cid = int(parts[1])
-            c = repo.get_contact(owner_id, cid)
-            if not c:
-                await cb.answer("客户不存在", show_alert=True)
-                return
             prompts[owner_id] = PendingPrompt(kind="adjust", target_chat_id=cid)
-            text, kb = render_quick_adjust_view(c, repo.currency_unit)
-            await safe_edit(cb, text, kb)
+            await safe_edit(
+                cb,
+                "<b>后台调账</b>\n\n<blockquote>点击下方快捷金额，或直接发送调账金额与备注（如 <code>+50 补差</code> / <code>-20 扣费</code>；仅内部记账不发客户回执）：</blockquote>",
+                InlineKeyboardMarkup(
+                    inline_keyboard=[
+                        [
+                            btn_success("+10", f"qadj:{cid}:100"),
+                            btn_success("+50", f"qadj:{cid}:500"),
+                            btn_success("+100", f"qadj:{cid}:1000"),
+                        ],
+                        [
+                            btn_danger("-10", f"qadj:{cid}:-100"),
+                            btn_danger("-50", f"qadj:{cid}:-500"),
+                            btn_danger("-100", f"qadj:{cid}:-1000"),
+                        ],
+                        [btn("取消", f"ct:{cid}")],
+                    ]
+                ),
+            )
             return
 
         if act == "qadj" and len(parts) == 3:
             cid = int(parts[1])
             delta = int(parts[2])
+            if delta == 0:
+                await cb.answer("无效金额", show_alert=True)
+                return
             prompts.pop(owner_id, None)
             res = repo.admin_adjust(owner_id=owner_id, chat_id=cid, delta_tenths=delta, note="后台快捷调账")
-            if res.applied:
-                sign = "+" if delta > 0 else ""
-                await cb.answer(f"已调账 {sign}{fmt_money(delta, repo.currency_unit)}，新余额 {fmt_money(res.balance_after, repo.currency_unit)}", show_alert=True)
-            else:
-                await cb.answer("调账失败：客户不存在", show_alert=True)
+            if not res.applied:
+                await cb.answer("客户不存在", show_alert=True)
+                return
+            await cb.answer(f"已调账 {'+' if delta > 0 else ''}{fmt_money(delta, repo.currency_unit)}")
             text, kb = render_contact_card(owner_id, cid)
             await safe_edit(cb, text, kb, answer=False)
             return
@@ -476,12 +489,6 @@ def create_admin_router(
             if sub == "pin":
                 val = repo.toggle_auto_pin(owner_id)
                 await cb.answer(f"自动置顶已{'开启' if val else '关闭'}")
-                text, kb = render_settings_view(repo.get_dashboard(owner_id, tz_offset))
-                await safe_edit(cb, text, kb, answer=False)
-                return
-            if sub == "report":
-                val = repo.toggle_daily_report(owner_id)
-                await cb.answer(f"每日财务日报已{'开启（23:55）' if val else '关闭'}")
                 text, kb = render_settings_view(repo.get_dashboard(owner_id, tz_offset))
                 await safe_edit(cb, text, kb, answer=False)
                 return

@@ -114,7 +114,6 @@ class DashboardStats:
     today_tx_count: int
     pending_receipts: int
     auto_pin: bool
-    daily_report: bool = True
 
 
 @dataclass(frozen=True)
@@ -320,30 +319,6 @@ class LedgerRepository:
             new_val = 0 if (row and int(row["auto_pin"]) == 1) else 1
             conn.execute("UPDATE accounts SET auto_pin = ?, updated_at = ? WHERE owner_id = ?", (new_val, now, owner_id))
             return bool(new_val)
-
-    def toggle_daily_report(self, owner_id: int) -> bool:
-        now = utc_now_iso()
-        with self._tx() as conn:
-            row = conn.execute("SELECT daily_report FROM accounts WHERE owner_id = ?", (owner_id,)).fetchone()
-            new_val = 0 if (row and int(row["daily_report"]) == 1) else 1
-            conn.execute("UPDATE accounts SET daily_report = ?, updated_at = ? WHERE owner_id = ?", (new_val, now, owner_id))
-            return bool(new_val)
-
-    def list_owners_due_daily_report(self, local_date: str) -> list[int]:
-        with self._lock:
-            rows = self._conn.execute(
-                "SELECT owner_id FROM accounts WHERE daily_report = 1 AND last_report_date != ?",
-                (local_date,),
-            ).fetchall()
-            return [int(r["owner_id"]) for r in rows]
-
-    def mark_daily_report_sent(self, owner_id: int, local_date: str) -> None:
-        now = utc_now_iso()
-        with self._tx() as conn:
-            conn.execute(
-                "UPDATE accounts SET last_report_date = ?, updated_at = ? WHERE owner_id = ?",
-                (local_date, now, owner_id),
-            )
 
     def get_link(self, link_id: str) -> tuple[int, bool] | None:
         with self._lock:
@@ -815,32 +790,6 @@ class LedgerRepository:
             ).fetchall()
             return ([_row_journal(r) for r in rows], total)
 
-    def get_all_journal_for_export(self, owner_id: int, chat_id: int | None = None) -> list[tuple[JournalEntry, str]]:
-        with self._lock:
-            if chat_id is not None:
-                rows = self._conn.execute(
-                    """
-                    SELECT j.*, COALESCE(c.alias, TRIM(COALESCE(c.tg_first_name,'') || ' ' || COALESCE(c.tg_last_name,'')), c.tg_username, CAST(c.chat_id AS TEXT)) AS c_label
-                    FROM journal j
-                    JOIN contacts c ON c.owner_id = j.owner_id AND c.chat_id = j.chat_id
-                    WHERE j.owner_id = ? AND j.chat_id = ?
-                    ORDER BY j.id DESC
-                    """,
-                    (owner_id, chat_id),
-                ).fetchall()
-            else:
-                rows = self._conn.execute(
-                    """
-                    SELECT j.*, COALESCE(c.alias, TRIM(COALESCE(c.tg_first_name,'') || ' ' || COALESCE(c.tg_last_name,'')), c.tg_username, CAST(c.chat_id AS TEXT)) AS c_label
-                    FROM journal j
-                    JOIN contacts c ON c.owner_id = j.owner_id AND c.chat_id = j.chat_id
-                    WHERE j.owner_id = ?
-                    ORDER BY j.id DESC
-                    """,
-                    (owner_id,),
-                ).fetchall()
-            return [(_row_journal(r), str(r["c_label"] or r["chat_id"]).strip()) for r in rows]
-
     def get_dashboard(self, owner_id: int, tz_offset_hours: int = 8) -> DashboardStats:
         today_utc = period_start_utc("today", tz_offset_hours)
         with self._lock:
@@ -870,7 +819,7 @@ class LedgerRepository:
                 (owner_id, today_utc),
             ).fetchone()
             pend = int(self._conn.execute("SELECT COUNT(*) FROM receipts WHERE owner_id = ? AND status = 'pending'", (owner_id,)).fetchone()[0])
-            acc = self._conn.execute("SELECT auto_pin, daily_report FROM accounts WHERE owner_id = ?", (owner_id,)).fetchone()
+            acc = self._conn.execute("SELECT auto_pin FROM accounts WHERE owner_id = ?", (owner_id,)).fetchone()
             return DashboardStats(
                 total_contacts=int(s["total"] or 0),
                 positive_count=int(s["pos_c"] or 0),
@@ -883,7 +832,6 @@ class LedgerRepository:
                 today_tx_count=int(t["cnt"] or 0),
                 pending_receipts=pend,
                 auto_pin=bool(acc["auto_pin"]) if acc else True,
-                daily_report=bool(acc["daily_report"]) if acc else True,
             )
 
     def get_financial_report(self, owner_id: int, period: Literal["today", "week", "month", "all"], tz_offset_hours: int = 8) -> FinancialReport:
@@ -985,14 +933,6 @@ class LedgerRepository:
                 (*params, limit, offset),
             ).fetchall()
             return ([_row_contact(r) for r in rows], total, sum_bal)
-
-    def list_all_contacts_for_export(self, owner_id: int) -> list[Contact]:
-        with self._lock:
-            rows = self._conn.execute(
-                "SELECT * FROM contacts WHERE owner_id = ? AND has_ledger = 1 ORDER BY balance_tenths DESC, updated_at DESC",
-                (owner_id,),
-            ).fetchall()
-            return [_row_contact(r) for r in rows]
 
     def search_contacts(self, owner_id: int, query: str, limit: int = 10, offset: int = 0) -> tuple[list[Contact], int]:
         q = query.strip()

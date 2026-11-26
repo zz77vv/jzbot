@@ -1,6 +1,5 @@
 """Tests for aiogram 3 ReceiptDispatcher and AnnouncementDispatcher."""
 
-from datetime import datetime, timezone
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
@@ -10,7 +9,7 @@ from aiogram.exceptions import TelegramNetworkError, TelegramRetryAfter
 from aiogram.methods import SendMessage
 
 from ledgerflow.repository import LedgerRepository
-from ledgerflow.workers import AnnouncementDispatcher, DailyReportDispatcher, ReceiptDispatcher
+from ledgerflow.workers import AnnouncementDispatcher, ReceiptDispatcher
 
 
 @pytest.mark.asyncio
@@ -67,23 +66,5 @@ async def test_announcement_dispatcher_sent_and_uncertain(tmp_path: Path):
         assert await disp.step_once() is False
         counts = repo.get_announcement_counts(ann_id)
         assert counts["sent"] == 1 and counts["uncertain"] == 1
-    finally:
-        repo.close()
-
-
-@pytest.mark.asyncio
-async def test_daily_report_dispatcher_sends_once_per_day(tmp_path: Path):
-    repo = LedgerRepository(tmp_path / "lf.db")
-    try:
-        repo.upsert_link("L1", 1, True)
-        repo.post_entry(owner_id=1, chat_id=10, tg_msg_id=1, link_id="L1", kind="in", amount_tenths=500)
-        bot = SimpleNamespace(send_message=AsyncMock())
-        disp = DailyReportDispatcher(repo, bot, tz_offset=8)
-        now = datetime(2026, 11, 26, 15, 55, tzinfo=timezone.utc)  # 23:55 UTC+8
-        assert await disp.run_due_once(now) == 1
-        bot.send_message.assert_awaited_once()
-        # Running again on same local date must not re-send
-        assert await disp.run_due_once(now) == 0
-        assert bot.send_message.await_count == 1
     finally:
         repo.close()
