@@ -54,7 +54,7 @@ async def run_async(cfg: AppConfig) -> None:
     async def on_startup() -> None:
         me = await bot.get_me()
         logger.info("LedgerFlow authenticated as @%s (id=%s, business=%s)", me.username, me.id, getattr(me, "can_connect_to_business", None))
-        await bot.set_my_commands([BotCommand(command="start", description="打开 LedgerFlow 财务总控台")])
+        await bot.set_my_commands([BotCommand(command="start", description="打开记账财务总控台")])
         receipts.start()
         announcer.start()
 

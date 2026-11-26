@@ -16,9 +16,11 @@ MAX_NOTE_LEN = 80
 # Supports:
 #   +100           -> deposit 100
 #   +100.5 货款     -> deposit 100.5 with note "货款"
+#   +100货款        -> deposit 100 with note "货款"
+#   +100.50        -> deposit 100.5
 #   -20.5 结账      -> withdraw 20.5 with note "结账"
-# Requires whitespace before optional note so "+10USDT" or "+1.23" are never misparsed!
-_TX_RE = re.compile(r"^([+-])(\d+)(?:\.(\d))?(?:\s+(.+))?$", re.DOTALL)
+# Requires whitespace or Chinese char before optional note so "+10USDT" or "+1.23" are never misparsed!
+_TX_RE = re.compile(r"^([+-])(\d+)(?:\.(\d)0?)?(?:(?:\s+|(?=[\u4e00-\u9fff]))(.+))?$", re.DOTALL)
 
 IntentKind = Literal["in", "out", "undo", "query", "settle"]
 
@@ -42,7 +44,7 @@ def parse_chat_intent(text: str | None) -> ParsedIntent | None:
     """
     if not text:
         return None
-    s = text.strip()
+    s = text.strip().replace("＋", "+").replace("－", "-").replace("／", "/").replace("．", ".")
     if not s:
         return None
 

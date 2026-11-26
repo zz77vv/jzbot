@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 
 from aiogram import Bot
 from aiogram.enums import ParseMode
@@ -34,6 +35,7 @@ class ReceiptDispatcher:
         self._wake = asyncio.Event()
         self._stop = asyncio.Event()
         self._task: asyncio.Task[None] | None = None
+        self._link_cache: dict[int, tuple[str, float]] = {}
         self._lock = asyncio.Lock()
 
     def wake(self) -> None:
@@ -134,6 +136,7 @@ class AnnouncementDispatcher:
         self._wake = asyncio.Event()
         self._stop = asyncio.Event()
         self._task: asyncio.Task[None] | None = None
+        self._link_cache: dict[int, tuple[str, float]] = {}
 
     def wake(self) -> None:
         self._wake.set()
@@ -175,6 +178,10 @@ class AnnouncementDispatcher:
                 pass
 
     async def _pick_live_link(self, owner_id: int) -> str | None:
+        now = time.monotonic()
+        cached = self._link_cache.get(owner_id)
+        if cached and now - cached[1] < 60.0:
+            return cached[0]
         for link_id, enabled in self.repo.list_owner_links(owner_id, limit=8):
             if not enabled:
                 continue
@@ -186,6 +193,7 @@ class AnnouncementDispatcher:
                 rights = getattr(info, "rights", None)
                 if rights is not None and getattr(rights, "can_reply", True) is False:
                     continue
+                self._link_cache[owner_id] = (link_id, now)
                 return link_id
             except (TelegramBadRequest, TelegramForbiddenError):
                 self.repo.upsert_link(link_id, owner_id, False)
@@ -193,6 +201,7 @@ class AnnouncementDispatcher:
                 return link_id
             except TelegramAPIError:
                 continue
+        self._link_cache.pop(owner_id, None)
         return None
 
     async def step_once(self) -> bool:
@@ -221,6 +230,9 @@ class AnnouncementDispatcher:
                 self.repo.finish_delivery(dlv.id, "failed", error_text=f"RetryAfter exhausted: {exc}")
         except TelegramNetworkError as exc:
             self.repo.finish_delivery(dlv.id, "uncertain", error_text=f"Uncertain network delivery: {exc}")
-        except (TelegramBadRequest, TelegramForbiddenError, TelegramAPIError) as exc:
+        except (TelegramBadRequest, TelegramForbiddenError) as exc:
+            self._link_cache.pop(job.owner_id, None)
+            self.repo.finish_delivery(dlv.id, "failed", error_text=f"{type(exc).__name__}: {exc}")
+        except TelegramAPIError as exc:
             self.repo.finish_delivery(dlv.id, "failed", error_text=f"{type(exc).__name__}: {exc}")
         return True

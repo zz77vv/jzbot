@@ -54,12 +54,37 @@ def test_crm_alias_tags_reports_and_csv_export(tmp_path: Path):
         # Search by custom alias & tag
         found, cnt = repo.search_contacts(1, "老王")
         assert cnt == 1 and found[0].label == "大客户老王"
-        tagged, tcnt = repo.list_contacts(1, "tag:VIP")
-        assert tcnt == 1 and tagged[0].chat_id == 101
+        tagged, tcnt, tsum = repo.list_contacts(1, "tag:VIP")
+        assert tcnt == 1 and tagged[0].chat_id == 101 and tsum == 5000
 
-        # Admin direct adjustment
+        # Admin direct adjustment & void adjust restores total_out_tenths
         adj = repo.admin_adjust(owner_id=1, chat_id=101, delta_tenths=-500, note="手动调减")
         assert adj.applied and adj.balance_after == 4500
+        assert repo.get_contact(1, 101).total_out_tenths == 500
+        u_adj = repo.void_last_entry(owner_id=1, chat_id=101, actor_id=1)
+        assert u_adj.applied and u_adj.balance_after == 5000
+        assert repo.get_contact(1, 101).total_out_tenths == 0
+
+        # Re-apply adjustment for report/backup assertions
+        adj2 = repo.admin_adjust(owner_id=1, chat_id=101, delta_tenths=-500, note="手动调减")
+        assert adj2.applied and adj2.balance_after == 4500
+
+        # Archived filtering: archived contacts hidden from normal lists & announcements
+        assert repo.set_archived(1, 102, True)
+        active_items, active_cnt, active_sum = repo.list_contacts(1, "all")
+        assert active_cnt == 1 and active_items[0].chat_id == 101 and active_sum == 4500
+        arch_items, arch_cnt, arch_sum = repo.list_contacts(1, "archived")
+        assert arch_cnt == 1 and arch_items[0].chat_id == 102 and arch_sum == -1200
+        assert [c.chat_id for c in repo.select_announcement_targets(1, "all")] == [101]
+        assert repo.set_archived(1, 102, False)
+
+        # Discard pending receipt
+        p_res = repo.post_entry(owner_id=1, chat_id=101, tg_msg_id=99, link_id="L1", kind="in", amount_tenths=100)
+        assert p_res.receipt_id is not None
+        assert repo.discard_receipt(1, p_res.receipt_id) is True
+        assert repo.discard_receipt(1, p_res.receipt_id) is False
+        # Void that +100 so report totals stay 5000 / 1700
+        repo.void_last_entry(owner_id=1, chat_id=101, actor_id=1)
 
         # Financial report
         rep = repo.get_financial_report(1, "today")

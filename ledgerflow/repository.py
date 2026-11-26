@@ -541,6 +541,12 @@ class LedgerRepository:
                 tin = max(0, tin - int(target["amount_tenths"]))
             elif target["kind"] == "out":
                 tout = max(0, tout - int(target["amount_tenths"]))
+            elif target["kind"] == "adjust":
+                adj_delta = int(target["delta_tenths"])
+                if adj_delta > 0:
+                    tin = max(0, tin - adj_delta)
+                elif adj_delta < 0:
+                    tout = max(0, tout - (-adj_delta))
 
             note = f"撤销 #{target['id']}"
             jcur = conn.execute(
@@ -917,35 +923,42 @@ class LedgerRepository:
         limit: int = 10,
         offset: int = 0,
         tz_offset_hours: int = 8,
-    ) -> tuple[list[Contact], int]:
+    ) -> tuple[list[Contact], int, int]:
         where = "owner_id = ? AND has_ledger = 1"
         params: list[object] = [owner_id]
         order = "updated_at DESC, chat_id ASC"
 
-        if mode == "positive":
-            where += " AND balance_tenths > 0"
-            order = "balance_tenths DESC, updated_at DESC"
-        elif mode == "debt":
-            where += " AND balance_tenths < 0"
-            order = "balance_tenths ASC, updated_at DESC"
-        elif mode == "today":
-            today_utc = period_start_utc("today", tz_offset_hours)
-            where += " AND updated_at >= ?"
-            params.append(today_utc)
-        elif mode == "archived":
+        if mode == "archived":
             where += " AND archived = 1"
-        elif mode.startswith("tag:"):
-            tag = mode[4:]
-            where += " AND (',' || tags || ',') LIKE ?"
-            params.append(f"%,{tag},%")
+        else:
+            where += " AND archived = 0"
+            if mode == "positive":
+                where += " AND balance_tenths > 0"
+                order = "balance_tenths DESC, updated_at DESC"
+            elif mode == "debt":
+                where += " AND balance_tenths < 0"
+                order = "balance_tenths ASC, updated_at DESC"
+            elif mode == "today":
+                today_utc = period_start_utc("today", tz_offset_hours)
+                where += " AND updated_at >= ?"
+                params.append(today_utc)
+            elif mode.startswith("tag:"):
+                tag = mode[4:]
+                where += " AND (',' || tags || ',') LIKE ?"
+                params.append(f"%,{tag},%")
 
         with self._lock:
-            total = int(self._conn.execute(f"SELECT COUNT(*) FROM contacts WHERE {where}", params).fetchone()[0])
+            agg = self._conn.execute(
+                f"SELECT COUNT(*), COALESCE(SUM(balance_tenths), 0) FROM contacts WHERE {where}",
+                params,
+            ).fetchone()
+            total = int(agg[0])
+            sum_bal = int(agg[1])
             rows = self._conn.execute(
                 f"SELECT * FROM contacts WHERE {where} ORDER BY {order} LIMIT ? OFFSET ?",
                 (*params, limit, offset),
             ).fetchall()
-            return ([_row_contact(r) for r in rows], total)
+            return ([_row_contact(r) for r in rows], total, sum_bal)
 
     def list_all_contacts_for_export(self, owner_id: int) -> list[Contact]:
         with self._lock:
@@ -1044,22 +1057,37 @@ class LedgerRepository:
             cur = conn.execute("UPDATE receipts SET next_try_at = ? WHERE owner_id = ? AND status = 'pending'", (now, owner_id))
             return cur.rowcount
 
+    def discard_receipt(self, owner_id: int, receipt_id: int) -> bool:
+        now = utc_now_iso()
+        with self._tx() as conn:
+            cur = conn.execute(
+                "DELETE FROM receipts WHERE id = ? AND owner_id = ? AND status = 'pending'",
+                (receipt_id, owner_id),
+            )
+            if cur.rowcount > 0:
+                conn.execute(
+                    "INSERT INTO audit_log(owner_id, action, target_chat_id, detail, created_at) VALUES (?, 'discard_receipt', NULL, ?, ?)",
+                    (owner_id, f"receipt_id={receipt_id}", now),
+                )
+                return True
+            return False
+
     # ------------------------------------------------------------------
     # Announcements (Targeted Broadcasts)
     # ------------------------------------------------------------------
 
     def select_announcement_targets(self, owner_id: int, target_key: str) -> list[Contact]:
         if target_key == "all":
-            where, params = "owner_id = ? AND has_ledger = 1", [owner_id]
+            where, params = "owner_id = ? AND has_ledger = 1 AND archived = 0", [owner_id]
         elif target_key == "positive":
-            where, params = "owner_id = ? AND has_ledger = 1 AND balance_tenths > 0", [owner_id]
+            where, params = "owner_id = ? AND has_ledger = 1 AND archived = 0 AND balance_tenths > 0", [owner_id]
         elif target_key == "non_negative":
-            where, params = "owner_id = ? AND has_ledger = 1 AND balance_tenths >= 0", [owner_id]
+            where, params = "owner_id = ? AND has_ledger = 1 AND archived = 0 AND balance_tenths >= 0", [owner_id]
         elif target_key == "debt":
-            where, params = "owner_id = ? AND has_ledger = 1 AND balance_tenths < 0", [owner_id]
+            where, params = "owner_id = ? AND has_ledger = 1 AND archived = 0 AND balance_tenths < 0", [owner_id]
         elif target_key.startswith("tag:"):
             tag = target_key[4:]
-            where, params = "owner_id = ? AND has_ledger = 1 AND (',' || tags || ',') LIKE ?", [owner_id, f"%,{tag},%"]
+            where, params = "owner_id = ? AND has_ledger = 1 AND archived = 0 AND (',' || tags || ',') LIKE ?", [owner_id, f"%,{tag},%"]
         else:
             return []
         with self._lock:

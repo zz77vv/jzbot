@@ -168,6 +168,9 @@ def open_database(path: Path) -> sqlite3.Connection:
     conn.execute("PRAGMA synchronous = FULL")
     conn.execute("PRAGMA foreign_keys = ON")
     conn.execute("PRAGMA busy_timeout = 30000")
+    conn.execute("PRAGMA cache_size = -16000")
+    conn.execute("PRAGMA temp_store = MEMORY")
+    conn.execute("PRAGMA mmap_size = 67108864")
     conn.executescript(DDL)
     conn.execute("INSERT OR IGNORE INTO meta(k, v) VALUES ('schema_version', ?)", (SCHEMA_VERSION,))
     if os.name == "posix":

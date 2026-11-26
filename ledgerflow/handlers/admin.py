@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import secrets
 import time
@@ -14,15 +15,13 @@ from aiogram import Bot, F, Router
 from aiogram.enums import ChatType, ParseMode
 from aiogram.exceptions import TelegramAPIError, TelegramBadRequest, TelegramForbiddenError, TelegramNetworkError
 from aiogram.filters import CommandStart
-from aiogram.types import BufferedInputFile, CallbackQuery, InlineKeyboardMarkup, Message
+from aiogram.types import CallbackQuery, InlineKeyboardMarkup, Message
 
 from ledgerflow.domain import esc, fmt_money, parse_chat_intent
-from ledgerflow.export import export_contacts_csv, export_journal_csv
 from ledgerflow.repository import LedgerRepository
 from ledgerflow.ui import (
     btn,
     btn_danger,
-    btn_primary,
     btn_success,
     render_announce_picker_view,
     render_announce_status_view,
@@ -107,8 +106,9 @@ def create_admin_router(
         back_cb = last_list_cb.get(owner_id, "lst:all:0")
         return render_contact_detail_view(c, recent, back_cb, repo.currency_unit, tz_offset)
 
-    async def safe_edit(cb: CallbackQuery, text: str, kb: InlineKeyboardMarkup) -> None:
-        await cb.answer()
+    async def safe_edit(cb: CallbackQuery, text: str, kb: InlineKeyboardMarkup, *, answer: bool = True) -> None:
+        if answer:
+            await cb.answer()
         if cb.message:
             try:
                 await cb.message.edit_text(text=text, parse_mode=ParseMode.HTML, reply_markup=kb)
@@ -263,8 +263,8 @@ def create_admin_router(
             page = max(0, int(parts[-1]))
             mode = ":".join(parts[1:-1])
             last_list_cb[owner_id] = f"lst:{mode}:{page}"
-            items, total = repo.list_contacts(owner_id, mode, limit=PAGE_SIZE, offset=page * PAGE_SIZE, tz_offset_hours=tz_offset)
-            text, kb = render_contact_list_view(items, total, mode, page, PAGE_SIZE, repo.currency_unit)
+            items, total, sum_bal = repo.list_contacts(owner_id, mode, limit=PAGE_SIZE, offset=page * PAGE_SIZE, tz_offset_hours=tz_offset)
+            text, kb = render_contact_list_view(items, total, mode, page, PAGE_SIZE, repo.currency_unit, sum_bal)
             await safe_edit(cb, text, kb)
             return
 
@@ -346,17 +346,6 @@ def create_admin_router(
             )
             return
 
-        if act == "undo" and len(parts) == 2:
-            cid = int(parts[1])
-            res = repo.void_last_entry(owner_id=owner_id, chat_id=cid, actor_id=owner_id)
-            if res.applied:
-                await cb.answer(f"已撤销上一笔，新余额 {fmt_money(res.balance_after, repo.currency_unit)}", show_alert=True)
-            else:
-                await cb.answer("暂无可撤销的有效流水", show_alert=True)
-            text, kb = render_contact_card(owner_id, cid)
-            await safe_edit(cb, text, kb)
-            return
-
         if act == "arch" and len(parts) == 2:
             cid = int(parts[1])
             c = repo.get_contact(owner_id, cid)
@@ -366,7 +355,7 @@ def create_admin_router(
             repo.set_archived(owner_id, cid, not c.archived)
             await cb.answer("已更新归档状态")
             text, kb = render_contact_card(owner_id, cid)
-            await safe_edit(cb, text, kb)
+            await safe_edit(cb, text, kb, answer=False)
             return
 
         if act == "loc" and len(parts) == 2:
@@ -420,7 +409,7 @@ def create_admin_router(
             else:
                 await cb.answer("余额已为 0", show_alert=True)
             text, kb = render_contact_card(owner_id, item.chat_id)
-            await safe_edit(cb, text, kb)
+            await safe_edit(cb, text, kb, answer=False)
             return
 
         if act == "rep" and len(parts) == 2 and parts[1] in ("today", "week", "month", "all"):
@@ -429,63 +418,29 @@ def create_admin_router(
             await safe_edit(cb, text, kb)
             return
 
-        if act == "exp" and len(parts) == 2:
-            sub = parts[1]
-            if sub == "menu":
-                kb = InlineKeyboardMarkup(
-                    inline_keyboard=[
-                        [btn_success("导出全量客户余额表 (.csv)", "exp:balances")],
-                        [btn_primary("导出全量流水明细 (.csv)", "exp:journal")],
-                        [btn("返回首页", "home")],
-                    ]
-                )
-                await safe_edit(
-                    cb,
-                    "<b>报表导出中心</b>\n\n<blockquote>支持一键导出带 UTF-8 BOM 的 CSV 表格，Excel 与手机 WPS 直接打开不乱码。</blockquote>",
-                    kb,
-                )
-                return
-            ts = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M")
-            if sub == "balances":
-                await cb.answer("正在生成客户余额表...")
-                data = export_contacts_csv(repo.list_all_contacts_for_export(owner_id), repo.currency_unit, tz_offset)
-                await bot.send_document(owner_id, BufferedInputFile(data, filename=f"ledgerflow_balances_{ts}.csv"), caption="全量客户余额表")
-                return
-            if sub == "journal":
-                await cb.answer("正在生成流水明细表...")
-                data = export_journal_csv(repo.get_all_journal_for_export(owner_id), repo.currency_unit, tz_offset)
-                await bot.send_document(owner_id, BufferedInputFile(data, filename=f"ledgerflow_journal_{ts}.csv"), caption="全量流水明细表")
-                return
-
-        if act == "exp_ct" and len(parts) == 2:
-            cid = int(parts[1])
-            c = repo.get_contact(owner_id, cid)
-            await cb.answer("正在生成个人对账单...")
-            ts = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M")
-            data = export_journal_csv(repo.get_all_journal_for_export(owner_id, cid), repo.currency_unit, tz_offset)
-            await bot.send_document(owner_id, BufferedInputFile(data, filename=f"statement_{cid}_{ts}.csv"), caption=f"{c.label if c else cid} 个人对账单")
-            return
-
         if act == "cfg" and len(parts) == 2:
             sub = parts[1]
             if sub == "menu":
-                ok, fk = repo.health_check()
-                text, kb = render_settings_view(repo.get_dashboard(owner_id, tz_offset), ok, fk)
+                text, kb = render_settings_view(repo.get_dashboard(owner_id, tz_offset))
                 await safe_edit(cb, text, kb)
                 return
             if sub == "pin":
                 val = repo.toggle_auto_pin(owner_id)
                 await cb.answer(f"自动置顶已{'开启' if val else '关闭'}")
-                ok, fk = repo.health_check()
-                text, kb = render_settings_view(repo.get_dashboard(owner_id, tz_offset), ok, fk)
-                await safe_edit(cb, text, kb)
+                text, kb = render_settings_view(repo.get_dashboard(owner_id, tz_offset))
+                await safe_edit(cb, text, kb, answer=False)
+                return
+            if sub == "health":
+                ok, fk = await asyncio.to_thread(repo.health_check)
+                msg = "数据库体检通过（quick_check=ok，外键错误=0）" if (ok and fk == 0) else f"体检异常（ok={ok}, fk={fk}）"
+                await cb.answer(msg, show_alert=True)
                 return
             if sub == "backup":
                 ts = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
-                dest = backup_dir / f"ledgerflow-hot-{ts}.db"
+                dest = backup_dir / f"jzbot-hot-{ts}.db"
                 try:
-                    repo.hot_backup(dest)
-                    for old in sorted(backup_dir.glob("ledgerflow-hot-*.db"))[:-10]:
+                    await asyncio.to_thread(repo.hot_backup, dest)
+                    for old in sorted(backup_dir.glob("jzbot-hot-*.db"))[:-10]:
                         old.unlink(missing_ok=True)
                     await cb.answer(f"热备份完成：{dest.name}", show_alert=True)
                 except Exception as exc:
@@ -496,7 +451,7 @@ def create_admin_router(
         if act == "rcpt" and len(parts) == 2:
             page = max(0, int(parts[1]))
             items, total = repo.list_pending_receipts(owner_id, limit=PAGE_SIZE, offset=page * PAGE_SIZE)
-            text, kb = render_receipts_view(items, total)
+            text, kb = render_receipts_view(items, total, page, PAGE_SIZE)
             await safe_edit(cb, text, kb)
             return
 
@@ -505,9 +460,21 @@ def create_admin_router(
             if cnt:
                 receipts.wake()
             await cb.answer(f"已触发立即重试（{cnt} 条）" if cnt else "当前无待发回执")
-            ok, fk = repo.health_check()
-            text, kb = render_settings_view(repo.get_dashboard(owner_id, tz_offset), ok, fk)
-            await safe_edit(cb, text, kb)
+            text, kb = render_settings_view(repo.get_dashboard(owner_id, tz_offset))
+            await safe_edit(cb, text, kb, answer=False)
+            return
+
+        if act == "rcpt_del" and len(parts) == 3:
+            rid = int(parts[1])
+            page = max(0, int(parts[2]))
+            ok = repo.discard_receipt(owner_id, rid)
+            await cb.answer(f"已忽略回执 #{rid}" if ok else "回执不存在或已发送")
+            items, total = repo.list_pending_receipts(owner_id, limit=PAGE_SIZE, offset=page * PAGE_SIZE)
+            if not items and page > 0:
+                page -= 1
+                items, total = repo.list_pending_receipts(owner_id, limit=PAGE_SIZE, offset=page * PAGE_SIZE)
+            text, kb = render_receipts_view(items, total, page, PAGE_SIZE)
+            await safe_edit(cb, text, kb, answer=False)
             return
 
         if act == "ann" and len(parts) >= 2:
@@ -554,7 +521,7 @@ def create_admin_router(
                 announcer.wake()
                 await cb.answer("通知已启动")
                 text, kb = render_announce_status_view(ann_id, "running", draft.target_label, repo.get_announcement_counts(ann_id))
-                await safe_edit(cb, text, kb)
+                await safe_edit(cb, text, kb, answer=False)
                 return
             if sub in ("pause", "resume", "cancel") and len(parts) == 3:
                 ann_id = int(parts[2])
@@ -572,7 +539,7 @@ def create_admin_router(
                         repo.get_announcement_counts(latest.id),
                         allow_new=latest.status in ("done", "cancelled"),
                     )
-                    await safe_edit(cb, text, kb)
+                    await safe_edit(cb, text, kb, answer=False)
                 return
 
         await cb.answer("未知操作")

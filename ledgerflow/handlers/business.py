@@ -41,6 +41,7 @@ def render_statement_card(repo: LedgerRepository, owner_id: int, chat_id: int, t
 
 def create_business_router(repo: LedgerRepository, receipts: ReceiptDispatcher, tz_offset: int = 8) -> Router:
     router = Router(name="business")
+    profile_cache: dict[tuple[int, int], tuple[str | None, str | None, str | None]] = {}
 
     @router.business_connection()
     async def on_business_connection(event: BusinessConnection, bot: Bot) -> None:
@@ -54,14 +55,14 @@ def create_business_router(repo: LedgerRepository, receipts: ReceiptDispatcher, 
                     chat_id=event.user.id,
                     parse_mode=ParseMode.HTML,
                     text=(
-                        "⚡ <b>LedgerFlow 智能记账已就绪</b>\n\n"
+                        "⚡ <b>记账助手已就绪</b>\n\n"
                         "在任意客户私聊中直接发送：\n"
                         "• <code>+100</code> 或 <code>+100 换U</code> — 入账（支持备注）\n"
                         "• <code>-50.5</code> 或 <code>-50.5 结款</code> — 出账\n"
                         "• <code>撤销</code>（或 <code>撤</code>）— 冲正撤销上一笔\n"
                         "• <code>/</code> 或 <code>账单</code> — 查看对账单\n"
                         "• <code>//</code> 或 <code>清账</code> — 结清归零\n\n"
-                        "私聊本机器人发送 /start 打开财务总控台、报表与导出中心。"
+                        "私聊本机器人发送 /start 打开财务总控台。"
                     ),
                 )
             except TelegramAPIError as exc:
@@ -89,7 +90,13 @@ def create_business_router(repo: LedgerRepository, receipts: ReceiptDispatcher, 
 
         chat = message.chat
         if chat.id != owner_id:
-            repo.sync_contact_profile(owner_id, chat.id, chat.username, chat.first_name, chat.last_name)
+            key = (owner_id, chat.id)
+            prof = (chat.username, chat.first_name, chat.last_name)
+            if profile_cache.get(key) != prof:
+                if len(profile_cache) >= 2000:
+                    profile_cache.clear()
+                repo.sync_contact_profile(owner_id, chat.id, *prof)
+                profile_cache[key] = prof
 
         sender = message.from_user
         if not sender or sender.is_bot or sender.id != owner_id:

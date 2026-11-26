@@ -13,6 +13,16 @@ def test_parse_rich_intents():
     p3 = parse_chat_intent("  -12.3   转出测试 ")
     assert p3 and p3.kind == "out" and p3.amount_tenths == 123 and p3.note == "转出测试"
 
+    # Full-width symbols, trailing zero decimal, and no-space Chinese memo
+    p4 = parse_chat_intent("＋100货款")
+    assert p4 and p4.kind == "in" and p4.amount_tenths == 1000 and p4.note == "货款"
+
+    p5 = parse_chat_intent("－50.50")
+    assert p5 and p5.kind == "out" and p5.amount_tenths == 505 and p5.note == ""
+
+    assert parse_chat_intent("／").kind == "query"
+    assert parse_chat_intent("／／").kind == "settle"
+
     assert parse_chat_intent("撤销").kind == "undo"
     assert parse_chat_intent("撤").kind == "undo"
     assert parse_chat_intent("-undo").kind == "undo"

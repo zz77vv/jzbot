@@ -59,7 +59,7 @@ def render_home_view(d: DashboardStats, unit: str = "USDT") -> tuple[str, Inline
     net = d.positive_sum + d.debt_sum
     net_sign = "+" if net > 0 else ""
     text = (
-        "<b>LEDGERFLOW</b>  ·  <i>财务总控台</i>\n\n"
+        "<b>记账助手</b>  ·  <i>财务总控台</i>\n\n"
         "<blockquote><b>资产总览</b>\n"
         f"存款总额　<code>+{fmt_money(d.positive_sum, unit)}</code>  ({d.positive_count}人)\n"
         f"欠款总额　<code>{fmt_money(d.debt_sum, unit)}</code>  ({d.debt_count}人)\n"
@@ -82,9 +82,6 @@ def render_home_view(d: DashboardStats, unit: str = "USDT") -> tuple[str, Inline
             ],
             [
                 btn_primary("财务报表", "rep:today"),
-                btn_success("导出表格", "exp:menu"),
-            ],
-            [
                 btn("定向通知", "ann:menu"),
                 btn("系统维护", "cfg:menu"),
                 btn("刷新", "home"),
@@ -101,6 +98,7 @@ def render_contact_list_view(
     page: int,
     page_size: int,
     unit: str = "USDT",
+    sum_balance: int = 0,
 ) -> tuple[str, InlineKeyboardMarkup]:
     titles = {
         "all": "全部客户",
@@ -111,9 +109,10 @@ def render_contact_list_view(
     }
     title = f"标签 #{mode[4:]}" if mode.startswith("tag:") else titles.get(mode, "客户列表")
     pages = max(1, (total + page_size - 1) // page_size)
+    sum_sign = "+" if sum_balance > 0 else ""
     header = (
         f"<b>{esc(title)}</b>  ·  第 <code>{page + 1}/{pages}</code> 页\n"
-        f"<blockquote>共 <b>{total}</b> 位客户，点击下方条目查看详情与调账。</blockquote>"
+        f"<blockquote>共 <b>{total}</b> 位客户  ·  余额合计 <b><code>{sum_sign}{fmt_money(sum_balance, unit)}</code></b></blockquote>"
     )
     rows: list[list[InlineKeyboardButton]] = []
     for c in items:
@@ -196,12 +195,11 @@ def render_contact_detail_view(
         inline_keyboard=[
             [
                 btn_primary("后台调账", f"adj:{c.chat_id}"),
-                btn("撤销上笔", f"undo:{c.chat_id}"),
                 btn_danger("结清归零", f"stl_ask:{c.chat_id}"),
             ],
             [
                 btn("全部流水", f"hist:{c.chat_id}:0"),
-                btn_success("导出对账单", f"exp_ct:{c.chat_id}"),
+                btn("定位聊天", f"loc:{c.chat_id}"),
             ],
             [
                 btn("设别名", f"alias:{c.chat_id}"),
@@ -209,10 +207,7 @@ def render_contact_detail_view(
                 btn_copy("复制 ID", str(c.chat_id)),
             ],
             [
-                btn("定位聊天", f"loc:{c.chat_id}"),
                 btn("取消归档" if c.archived else "归档客户", f"arch:{c.chat_id}"),
-            ],
-            [
                 btn("← 返回列表", back_cb),
                 btn("首页", "home"),
             ],
@@ -246,7 +241,7 @@ def render_history_view(
         nav.append(btn("下一页 →", f"hist:{chat_id}:{page + 1}"))
     if nav:
         rows.append(nav)
-    rows.append([btn_success("导出 CSV", f"exp_ct:{chat_id}"), btn("← 返回客户", f"ct:{chat_id}")])
+    rows.append([btn("← 返回客户", f"ct:{chat_id}"), btn("首页", "home")])
     return (text, InlineKeyboardMarkup(inline_keyboard=rows))
 
 
@@ -278,18 +273,16 @@ def render_report_view(rep: FinancialReport, unit: str = "USDT") -> tuple[str, I
     kb = InlineKeyboardMarkup(
         inline_keyboard=[
             [pbtn("today", "今日"), pbtn("week", "本周"), pbtn("month", "本月"), pbtn("all", "全部")],
-            [btn_success("导出 Excel 报表", "exp:menu"), btn("返回首页", "home")],
+            [btn("返回首页", "home")],
         ]
     )
     return ("\n\n".join(blocks), kb)
 
 
-def render_settings_view(d: DashboardStats, db_ok: bool, fk_errors: int) -> tuple[str, InlineKeyboardMarkup]:
-    health = "正常" if (db_ok and fk_errors == 0) else f"异常（外键错误 {fk_errors}）"
+def render_settings_view(d: DashboardStats) -> tuple[str, InlineKeyboardMarkup]:
     text = (
         "<b>系统维护与设置</b>\n\n"
         "<blockquote><b>运行状态</b>\n"
-        f"数据库体检　<code>{health}</code>\n"
         f"待发回执数　<code>{d.pending_receipts}</code> 条\n"
         f"回执自动置顶　<code>{'已开启' if d.auto_pin else '已关闭'}</code></blockquote>"
     )
@@ -302,15 +295,24 @@ def render_settings_view(d: DashboardStats, db_ok: bool, fk_errors: int) -> tupl
             ],
             [
                 btn_success("立即热备份账本", "cfg:backup"),
-                btn("已归档客户", "lst:archived:0"),
+                btn("账本健康体检", "cfg:health"),
             ],
-            [btn("返回首页", "home")],
+            [
+                btn("已归档客户", "lst:archived:0"),
+                btn("返回首页", "home"),
+            ],
         ]
     )
     return (text, kb)
 
 
-def render_receipts_view(items: list[ReceiptItem], total: int) -> tuple[str, InlineKeyboardMarkup]:
+def render_receipts_view(
+    items: list[ReceiptItem],
+    total: int,
+    page: int = 0,
+    page_size: int = 10,
+) -> tuple[str, InlineKeyboardMarkup]:
+    pages = max(1, (total + page_size - 1) // page_size)
     if not items:
         body = "当前队列为空，所有回执均已送达。"
     else:
@@ -319,10 +321,19 @@ def render_receipts_view(items: list[ReceiptItem], total: int) -> tuple[str, Inl
             + (f" · {esc(r.last_error[:36])}" if r.last_error else "")
             for r in items
         )
-    text = f"<b>待发回执队列</b>（共 <code>{total}</code> 条）\n\n<blockquote>{body}</blockquote>"
+    text = f"<b>待发回执队列</b>（共 <code>{total}</code> 条 · 第 <code>{page + 1}/{pages}</code> 页）\n\n<blockquote>{body}</blockquote>"
     rows: list[list[InlineKeyboardButton]] = []
     if total > 0:
         rows.append([btn_primary("立即重试全部", "rcpt_retry")])
+        for i in range(0, len(items), 2):
+            rows.append([btn_danger(f"忽略 #{r.id}", f"rcpt_del:{r.id}:{page}") for r in items[i : i + 2]])
+    nav: list[InlineKeyboardButton] = []
+    if page > 0:
+        nav.append(btn("← 上一页", f"rcpt:{page - 1}"))
+    if (page + 1) * page_size < total:
+        nav.append(btn("下一页 →", f"rcpt:{page + 1}"))
+    if nav:
+        rows.append(nav)
     rows.append([btn("← 返回维护", "cfg:menu"), btn("首页", "home")])
     return (text, InlineKeyboardMarkup(inline_keyboard=rows))
 

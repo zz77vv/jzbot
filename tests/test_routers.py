@@ -32,16 +32,18 @@ def test_routers_wire_into_dispatcher_and_render_statement(tmp_path: Path):
         assert "#1" not in card
 
         home_txt, home_kb = render_home_view(repo.get_dashboard(1))
-        assert "LEDGERFLOW" in home_txt
+        assert "记账助手" in home_txt
         assert home_kb.inline_keyboard[0][0].style == "success"
         assert home_kb.inline_keyboard[0][1].style == "danger"
         assert home_kb.inline_keyboard[0][2].style == "primary"
+        assert all("导出" not in b.text for row in home_kb.inline_keyboard for b in row)
 
         c = repo.get_contact(1, 20)
         txs, _ = repo.get_journal(1, 20, limit=3)
         dt_txt, dt_kb = render_contact_detail_view(c, txs, "lst:all:0")
         assert "<blockquote expandable>" in dt_txt
         assert "#1" in dt_txt
+        assert all("撤销" not in b.text and "导出" not in b.text for row in dt_kb.inline_keyboard for b in row)
         assert any(b.copy_text and b.copy_text.text == "20" for row in dt_kb.inline_keyboard for b in row)
     finally:
         repo.close()
