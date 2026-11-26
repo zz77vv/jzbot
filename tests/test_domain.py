@@ -34,4 +34,4 @@ def test_formatting_and_html_receipt():
     assert "<blockquote>" in html
     assert "+100 USDT" in html
     assert "换U" in html
-    assert "#42" in html
+    assert "#42" not in html

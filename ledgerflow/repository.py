@@ -583,7 +583,7 @@ class LedgerRepository:
                     amount_tenths=abs(rev_delta),
                     balance_after=after,
                     journal_id=void_id,
-                    note=note,
+                    note="",
                     unit=self.currency_unit,
                 )
                 rcur = conn.execute(

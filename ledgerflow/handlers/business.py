@@ -35,7 +35,7 @@ def render_statement_card(repo: LedgerRepository, owner_id: int, chat_id: int, t
     if not txs:
         return summary + "\n\n<blockquote><i>暂无流水记录</i></blockquote>"
 
-    tx_lines = "\n".join(format_tx_line(tx, unit, tz_offset) for tx in txs)
+    tx_lines = "\n".join(format_tx_line(tx, unit, tz_offset, show_id=False) for tx in txs)
     return summary + f"\n\n<blockquote expandable><b>最近 {len(txs)} 笔流水（共 {total} 笔 · 点击展开）</b>\n{tx_lines}</blockquote>"
 
 

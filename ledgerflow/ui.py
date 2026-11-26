@@ -34,9 +34,10 @@ def btn_copy(text: str, value: str, style: str | None = None) -> InlineKeyboardB
     return InlineKeyboardButton(text=text, copy_text=CopyTextButton(text=value), style=style)
 
 
-def format_tx_line(tx: JournalEntry, unit: str = "USDT", tz_offset: int = 8) -> str:
+def format_tx_line(tx: JournalEntry, unit: str = "USDT", tz_offset: int = 8, show_id: bool = True) -> str:
     ts = fmt_local_dt(tx.created_at, tz_offset)
-    note = f"  ·  {esc(tx.note)}" if tx.note else ""
+    display_note = "" if (not show_id and tx.kind == "void") else tx.note
+    note = f"  ·  {esc(display_note)}" if display_note else ""
     if tx.kind == "in":
         op = f"<b>+{fmt_money(tx.amount_tenths, unit)}</b>"
     elif tx.kind == "out":
@@ -49,7 +50,8 @@ def format_tx_line(tx: JournalEntry, unit: str = "USDT", tz_offset: int = 8) -> 
     else:
         sign = "+" if tx.delta_tenths >= 0 else ""
         op = f"调账 <code>{sign}{fmt_money(tx.delta_tenths, unit)}</code>"
-    line = f"<code>#{tx.id}</code>  <code>{ts}</code>  {op}{note}  →  <code>{fmt_money(tx.balance_after, unit)}</code>"
+    prefix = f"<code>#{tx.id}</code>  " if show_id else ""
+    line = f"{prefix}<code>{ts}</code>  {op}{note}  →  <code>{fmt_money(tx.balance_after, unit)}</code>"
     return f"<s>{line}</s>" if tx.voided_by_id else line
 
 

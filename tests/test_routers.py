@@ -29,6 +29,7 @@ def test_routers_wire_into_dispatcher_and_render_statement(tmp_path: Path):
         assert "50 USDT" in card
         assert "测试单" in card
         assert "<blockquote expandable>" in card
+        assert "#1" not in card
 
         home_txt, home_kb = render_home_view(repo.get_dashboard(1))
         assert "LEDGERFLOW" in home_txt
@@ -40,6 +41,7 @@ def test_routers_wire_into_dispatcher_and_render_statement(tmp_path: Path):
         txs, _ = repo.get_journal(1, 20, limit=3)
         dt_txt, dt_kb = render_contact_detail_view(c, txs, "lst:all:0")
         assert "<blockquote expandable>" in dt_txt
+        assert "#1" in dt_txt
         assert any(b.copy_text and b.copy_text.text == "20" for row in dt_kb.inline_keyboard for b in row)
     finally:
         repo.close()
