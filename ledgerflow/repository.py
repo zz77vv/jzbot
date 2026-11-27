@@ -735,7 +735,7 @@ class LedgerRepository:
             return PostResult(True, False, jid, before, after, None)
 
     # ------------------------------------------------------------------
-    # Contact Metadata (Alias, Tags, Archive)
+    # Contact Metadata (Alias, Tags)
     # ------------------------------------------------------------------
 
     def set_alias(self, owner_id: int, chat_id: int, alias: str | None) -> bool:
@@ -760,14 +760,6 @@ class LedgerRepository:
                     "INSERT INTO audit_log(owner_id, action, target_chat_id, detail, created_at) VALUES (?, 'tags', ?, ?, ?)",
                     (owner_id, chat_id, ser, now),
                 )
-            return cur.rowcount > 0
-
-    def set_archived(self, owner_id: int, chat_id: int, archived: bool) -> bool:
-        with self._tx() as conn:
-            cur = conn.execute(
-                "UPDATE contacts SET archived = ? WHERE owner_id = ? AND chat_id = ?",
-                (1 if archived else 0, owner_id, chat_id),
-            )
             return cur.rowcount > 0
 
     # ------------------------------------------------------------------
@@ -902,24 +894,20 @@ class LedgerRepository:
         params: list[object] = [owner_id]
         order = "updated_at DESC, chat_id ASC"
 
-        if mode == "archived":
-            where += " AND archived = 1"
-        else:
-            where += " AND archived = 0"
-            if mode == "positive":
-                where += " AND balance_tenths > 0"
-                order = "balance_tenths DESC, updated_at DESC"
-            elif mode == "debt":
-                where += " AND balance_tenths < 0"
-                order = "balance_tenths ASC, updated_at DESC"
-            elif mode == "today":
-                today_utc = period_start_utc("today", tz_offset_hours)
-                where += " AND updated_at >= ?"
-                params.append(today_utc)
-            elif mode.startswith("tag:"):
-                tag = mode[4:]
-                where += " AND (',' || tags || ',') LIKE ?"
-                params.append(f"%,{tag},%")
+        if mode == "positive":
+            where += " AND balance_tenths > 0"
+            order = "balance_tenths DESC, updated_at DESC"
+        elif mode == "debt":
+            where += " AND balance_tenths < 0"
+            order = "balance_tenths ASC, updated_at DESC"
+        elif mode == "today":
+            today_utc = period_start_utc("today", tz_offset_hours)
+            where += " AND updated_at >= ?"
+            params.append(today_utc)
+        elif mode.startswith("tag:"):
+            tag = mode[4:]
+            where += " AND (',' || tags || ',') LIKE ?"
+            params.append(f"%,{tag},%")
 
         with self._lock:
             agg = self._conn.execute(
@@ -933,31 +921,6 @@ class LedgerRepository:
                 (*params, limit, offset),
             ).fetchall()
             return ([_row_contact(r) for r in rows], total, sum_bal)
-
-    def search_contacts(self, owner_id: int, query: str, limit: int = 10, offset: int = 0) -> tuple[list[Contact], int]:
-        q = query.strip()
-        if not q or q == "@" or len(q) > 64:
-            return ([], 0)
-        like = f"%{q.lstrip('@').lower()}%"
-        where = """
-            owner_id = ? AND has_ledger = 1 AND (
-                CAST(chat_id AS TEXT) LIKE ?
-                OR LOWER(COALESCE(alias, '')) LIKE ?
-                OR LOWER(COALESCE(tags, '')) LIKE ?
-                OR LOWER(COALESCE(tg_username, '')) LIKE ?
-                OR LOWER(COALESCE(tg_first_name, '')) LIKE ?
-                OR LOWER(COALESCE(tg_last_name, '')) LIKE ?
-                OR LOWER(TRIM(COALESCE(tg_first_name, '') || ' ' || COALESCE(tg_last_name, ''))) LIKE ?
-            )
-        """
-        params = (owner_id, like, like, like, like, like, like, like)
-        with self._lock:
-            total = int(self._conn.execute(f"SELECT COUNT(*) FROM contacts WHERE {where}", params).fetchone()[0])
-            rows = self._conn.execute(
-                f"SELECT * FROM contacts WHERE {where} ORDER BY updated_at DESC LIMIT ? OFFSET ?",
-                (*params, limit, offset),
-            ).fetchall()
-            return ([_row_contact(r) for r in rows], total)
 
     def list_owner_tags(self, owner_id: int) -> list[str]:
         with self._lock:
@@ -1044,21 +1007,25 @@ class LedgerRepository:
 
     def select_announcement_targets(self, owner_id: int, target_key: str) -> list[Contact]:
         if target_key == "all":
-            where, params = "owner_id = ? AND has_ledger = 1 AND archived = 0", [owner_id]
+            where, params = "owner_id = ? AND has_ledger = 1", [owner_id]
         elif target_key == "positive":
-            where, params = "owner_id = ? AND has_ledger = 1 AND archived = 0 AND balance_tenths > 0", [owner_id]
+            where, params = "owner_id = ? AND has_ledger = 1 AND balance_tenths > 0", [owner_id]
         elif target_key == "non_negative":
-            where, params = "owner_id = ? AND has_ledger = 1 AND archived = 0 AND balance_tenths >= 0", [owner_id]
+            where, params = "owner_id = ? AND has_ledger = 1 AND balance_tenths >= 0", [owner_id]
         elif target_key == "debt":
-            where, params = "owner_id = ? AND has_ledger = 1 AND archived = 0 AND balance_tenths < 0", [owner_id]
+            where, params = "owner_id = ? AND has_ledger = 1 AND balance_tenths < 0", [owner_id]
         elif target_key.startswith("tag:"):
             tag = target_key[4:]
-            where, params = "owner_id = ? AND has_ledger = 1 AND archived = 0 AND (',' || tags || ',') LIKE ?", [owner_id, f"%,{tag},%"]
+            where, params = "owner_id = ? AND has_ledger = 1 AND (',' || tags || ',') LIKE ?", [owner_id, f"%,{tag},%"]
         else:
             return []
         with self._lock:
             rows = self._conn.execute(f"SELECT * FROM contacts WHERE {where} ORDER BY updated_at DESC LIMIT 1001", params).fetchall()
             return [_row_contact(r) for r in rows]
+
+    def has_running_announcement(self) -> bool:
+        with self._lock:
+            return self._conn.execute("SELECT 1 FROM announcements WHERE status = 'running' LIMIT 1").fetchone() is not None
 
     def create_announcement(self, owner_id: int, target_desc: str, body_text: str, chat_ids: list[int]) -> int:
         now = utc_now_iso()

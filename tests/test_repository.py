@@ -50,9 +50,7 @@ def test_crm_alias_tags_reports_and_csv_export(tmp_path: Path):
         assert repo.set_tags(1, 101, ["VIP", "北京"])
         assert repo.list_owner_tags(1) == ["VIP", "北京"]
 
-        # Search by custom alias & tag
-        found, cnt = repo.search_contacts(1, "老王")
-        assert cnt == 1 and found[0].label == "大客户老王"
+        # Tag filter & list_contacts aggregation
         tagged, tcnt, tsum = repo.list_contacts(1, "tag:VIP")
         assert tcnt == 1 and tagged[0].chat_id == 101 and tsum == 5000
 
@@ -68,14 +66,14 @@ def test_crm_alias_tags_reports_and_csv_export(tmp_path: Path):
         adj2 = repo.admin_adjust(owner_id=1, chat_id=101, delta_tenths=-500, note="手动调减")
         assert adj2.applied and adj2.balance_after == 4500
 
-        # Archived filtering: archived contacts hidden from normal lists & announcements
-        assert repo.set_archived(1, 102, True)
-        active_items, active_cnt, active_sum = repo.list_contacts(1, "all")
-        assert active_cnt == 1 and active_items[0].chat_id == 101 and active_sum == 4500
-        arch_items, arch_cnt, arch_sum = repo.list_contacts(1, "archived")
-        assert arch_cnt == 1 and arch_items[0].chat_id == 102 and arch_sum == -1200
-        assert [c.chat_id for c in repo.select_announcement_targets(1, "all")] == [101]
-        assert repo.set_archived(1, 102, False)
+        all_items, all_cnt, all_sum = repo.list_contacts(1, "all")
+        assert all_cnt == 2 and all_sum == 3300 and len(all_items) == 2
+        assert len(repo.select_announcement_targets(1, "all")) == 2
+        assert repo.has_running_announcement() is False
+        ann_id = repo.create_announcement(1, "all", "测试通知", [101])
+        assert repo.has_running_announcement() is True
+        assert repo.set_announcement_status(ann_id, 1, "cancelled") is True
+        assert repo.has_running_announcement() is False
 
         # Discard pending receipt
         p_res = repo.post_entry(owner_id=1, chat_id=101, tg_msg_id=99, link_id="L1", kind="in", amount_tenths=100)

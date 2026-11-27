@@ -35,7 +35,6 @@ class ReceiptDispatcher:
         self._wake = asyncio.Event()
         self._stop = asyncio.Event()
         self._task: asyncio.Task[None] | None = None
-        self._link_cache: dict[int, tuple[str, float]] = {}
         self._lock = asyncio.Lock()
 
     def wake(self) -> None:
@@ -160,24 +159,31 @@ class AnnouncementDispatcher:
 
     async def _loop(self) -> None:
         while not self._stop.is_set():
+            idle_timeout = 30.0
             try:
-                if self.repo.has_due_receipts():
-                    await asyncio.sleep(0.5)
-                    continue
-                if await self.step_once():
-                    await asyncio.sleep(ANNOUNCE_PACE_SECONDS)
-                    continue
+                if self.repo.has_running_announcement():
+                    idle_timeout = 3.0
+                    if self.repo.has_due_receipts():
+                        await asyncio.sleep(0.5)
+                        continue
+                    if await self.step_once():
+                        await asyncio.sleep(ANNOUNCE_PACE_SECONDS)
+                        continue
             except asyncio.CancelledError:
                 raise
             except Exception:
                 logger.exception("AnnouncementDispatcher loop error")
+                idle_timeout = 3.0
             self._wake.clear()
             try:
-                await asyncio.wait_for(self._wake.wait(), timeout=3.0)
+                await asyncio.wait_for(self._wake.wait(), timeout=idle_timeout)
             except asyncio.TimeoutError:
                 pass
 
-    async def _pick_live_link(self, owner_id: int) -> str | None:
+    def invalidate_link(self, owner_id: int) -> None:
+        self._link_cache.pop(owner_id, None)
+
+    async def pick_live_link(self, owner_id: int) -> str | None:
         now = time.monotonic()
         cached = self._link_cache.get(owner_id)
         if cached and now - cached[1] < 60.0:
@@ -209,7 +215,7 @@ class AnnouncementDispatcher:
         if not claimed:
             return False
         job, dlv = claimed
-        link_id = await self._pick_live_link(job.owner_id)
+        link_id = await self.pick_live_link(job.owner_id)
         if not link_id:
             self.repo.finish_delivery(dlv.id, "failed", error_text="No active Business connection")
             return True
@@ -231,7 +237,7 @@ class AnnouncementDispatcher:
         except TelegramNetworkError as exc:
             self.repo.finish_delivery(dlv.id, "uncertain", error_text=f"Uncertain network delivery: {exc}")
         except (TelegramBadRequest, TelegramForbiddenError) as exc:
-            self._link_cache.pop(job.owner_id, None)
+            self.invalidate_link(job.owner_id)
             self.repo.finish_delivery(dlv.id, "failed", error_text=f"{type(exc).__name__}: {exc}")
         except TelegramAPIError as exc:
             self.repo.finish_delivery(dlv.id, "failed", error_text=f"{type(exc).__name__}: {exc}")

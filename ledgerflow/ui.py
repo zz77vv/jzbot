@@ -33,7 +33,6 @@ from ledgerflow.emojis import (
     PLAY,
     RED,
     REFRESH,
-    SEARCH,
     SETTINGS,
     SHIELD,
     SILVER,
@@ -123,7 +122,6 @@ def render_home_view(d: DashboardStats, unit: str = "USDT") -> tuple[str, Inline
             [
                 btn("今日活跃", "lst:today:0", icon=CALENDAR),
                 btn("标签筛选", "tags:menu", icon=TAG),
-                btn("搜索客户", "search", icon=SEARCH),
             ],
             [
                 btn_primary("财务报表", "rep:today", icon=CHART),
@@ -150,7 +148,6 @@ def render_contact_list_view(
         "positive": "预存排行",
         "debt": "未结排行",
         "today": "今日活跃",
-        "archived": "已归档客户",
     }
     title = f"标签 #{mode[4:]}" if mode.startswith("tag:") else titles.get(mode, "客户列表")
     pages = max(1, (total + page_size - 1) // page_size)
@@ -162,8 +159,7 @@ def render_contact_list_view(
     rows: list[list[InlineKeyboardButton]] = []
     for c in items:
         sign = "+" if c.balance_tenths > 0 else ""
-        arch = " [归档]" if c.archived else ""
-        label = f"{c.label}{arch}  ·  {sign}{fmt_money(c.balance_tenths, unit)}"
+        label = f"{c.label}  ·  {sign}{fmt_money(c.balance_tenths, unit)}"
         rows.append([btn(label, f"ct:{c.chat_id}")])
     nav: list[InlineKeyboardButton] = []
     if page > 0:
@@ -176,34 +172,6 @@ def render_contact_list_view(
     return (header, InlineKeyboardMarkup(inline_keyboard=rows))
 
 
-def render_search_view(
-    query: str,
-    items: list[Contact],
-    total: int,
-    page: int,
-    page_size: int,
-    unit: str = "USDT",
-) -> tuple[str, InlineKeyboardMarkup]:
-    pages = max(1, (total + page_size - 1) // page_size)
-    header = (
-        f"{tg_emoji(SEARCH)} <b>客户搜索</b>  ·  「<code>{esc(query)}</code>」\n"
-        f"<blockquote>匹配到 <b>{total}</b> 位客户（第 <code>{page + 1}/{pages}</code> 页）</blockquote>"
-    )
-    rows: list[list[InlineKeyboardButton]] = []
-    for c in items:
-        sign = "+" if c.balance_tenths > 0 else ""
-        rows.append([btn(f"{c.label}  ·  {sign}{fmt_money(c.balance_tenths, unit)}", f"ct:{c.chat_id}")])
-    nav: list[InlineKeyboardButton] = []
-    if page > 0:
-        nav.append(btn("← 上一页", f"spage:{page - 1}"))
-    if (page + 1) * page_size < total:
-        nav.append(btn("下一页 →", f"spage:{page + 1}"))
-    if nav:
-        rows.append(nav)
-    rows.append([btn_primary("重新搜索", "search", icon=SEARCH), btn("返回首页", "home", icon=HOME)])
-    return (header, InlineKeyboardMarkup(inline_keyboard=rows))
-
-
 def render_contact_detail_view(
     c: Contact,
     recent_txs: list[JournalEntry],
@@ -213,11 +181,10 @@ def render_contact_detail_view(
 ) -> tuple[str, InlineKeyboardMarkup]:
     uname = f"@{esc(c.tg_username)}" if c.tg_username else "无"
     tags_str = " ".join(f"<code>#{esc(t)}</code>" for t in c.tags) if c.tags else "未设置"
-    arch_str = "  ·  <i>已归档</i>" if c.archived else ""
     bal_sign = "+" if c.balance_tenths > 0 else ""
 
     parts = [
-        f"{tg_emoji(CASH)} <b>{esc(c.label)}</b>{arch_str}",
+        f"{tg_emoji(CASH)} <b>{esc(c.label)}</b>",
         (
             "<blockquote><b>客户档案</b>\n"
             f"TG 名称　{esc(c.tg_display_name)}（{uname}）\n"
@@ -252,7 +219,6 @@ def render_contact_detail_view(
                 btn_copy("复制 ID", str(c.chat_id)),
             ],
             [
-                btn("取消归档" if c.archived else "归档客户", f"arch:{c.chat_id}"),
                 btn("← 返回列表", back_cb),
                 btn("首页", "home", icon=HOME),
             ],
@@ -350,7 +316,6 @@ def render_settings_view(d: DashboardStats) -> tuple[str, InlineKeyboardMarkup]:
                 btn("账本健康体检", "cfg:health", icon=OK),
             ],
             [
-                btn("已归档客户", "lst:archived:0"),
                 btn("返回首页", "home", icon=HOME),
             ],
         ]

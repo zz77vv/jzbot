@@ -13,12 +13,12 @@ from pathlib import Path
 
 from aiogram import Bot, F, Router
 from aiogram.enums import ChatType, ParseMode
-from aiogram.exceptions import TelegramAPIError, TelegramBadRequest, TelegramForbiddenError, TelegramNetworkError
+from aiogram.exceptions import TelegramAPIError, TelegramBadRequest, TelegramForbiddenError
 from aiogram.filters import CommandStart
 from aiogram.types import CallbackQuery, InlineKeyboardMarkup, Message
 
 from ledgerflow.domain import esc, fmt_money, parse_chat_intent
-from ledgerflow.emojis import ANNOUNCE, NO, OK, SEARCH, TAG, tg_emoji
+from ledgerflow.emojis import ANNOUNCE, NO, OK, TAG, tg_emoji
 from ledgerflow.repository import LedgerRepository
 from ledgerflow.ui import (
     btn,
@@ -32,7 +32,6 @@ from ledgerflow.ui import (
     render_home_view,
     render_receipts_view,
     render_report_view,
-    render_search_view,
     render_settings_view,
     strip_button_icons,
 )
@@ -58,7 +57,7 @@ class SettleToken:
 
 @dataclass
 class PendingPrompt:
-    kind: str  # "search" | "alias" | "tags" | "adjust" | "announce_body"
+    kind: str  # "alias" | "tags" | "adjust" | "announce_body"
     target_chat_id: int = 0
     extra: str = ""
 
@@ -85,7 +84,6 @@ def create_admin_router(
 ) -> Router:
     router = Router(name="admin")
     prompts: dict[int, PendingPrompt] = {}
-    last_search: dict[int, str] = {}
     last_list_cb: dict[int, str] = {}
     settle_tokens: OrderedDict[str, SettleToken] = OrderedDict()
     ann_drafts: dict[int, AnnounceDraft] = {}
@@ -143,31 +141,17 @@ def create_admin_router(
                 raise
 
     async def locate_contact(bot: Bot, owner_id: int, chat_id: int) -> tuple[bool, str]:
-        for link_id, enabled in repo.list_owner_links(owner_id, limit=8):
-            if not enabled:
-                continue
-            try:
-                info = await bot.get_business_connection(link_id)
-                if info.user.id != owner_id or not info.is_enabled:
-                    repo.upsert_link(link_id, info.user.id, bool(info.is_enabled))
-                    continue
-                rights = getattr(info, "rights", None)
-                if rights is not None and getattr(rights, "can_reply", True) is False:
-                    continue
-            except (TelegramBadRequest, TelegramForbiddenError):
-                repo.upsert_link(link_id, owner_id, False)
-                continue
-            except TelegramNetworkError:
-                return (False, "网络异常，请稍后重试")
-            except TelegramAPIError:
-                continue
-
-            try:
-                await bot.send_message(chat_id=chat_id, text=".", business_connection_id=link_id, disable_notification=True)
-                return (True, "已发送静默定位点号")
-            except TelegramAPIError as exc:
-                return (False, f"定位失败：{exc}")
-        return (False, "未找到可用的 Business 连接")
+        link_id = await announcer.pick_live_link(owner_id)
+        if not link_id:
+            return (False, "未找到可用的 Business 连接")
+        try:
+            await bot.send_message(chat_id=chat_id, text=".", business_connection_id=link_id, disable_notification=True)
+            return (True, "已发送静默定位点号")
+        except (TelegramBadRequest, TelegramForbiddenError) as exc:
+            announcer.invalidate_link(owner_id)
+            return (False, f"定位失败：{exc}")
+        except TelegramAPIError as exc:
+            return (False, f"定位失败：{exc}")
 
     # ------------------------------------------------------------------
     # Handlers
@@ -190,26 +174,8 @@ def create_admin_router(
         if not repo.is_owner(owner_id):
             return
         raw = message.text.strip()
+        prompt = prompts.get(owner_id)
         if prompt is None:
-            if raw.startswith("/") or not raw or raw == "@" or len(raw) > 64:
-                return
-            last_search[owner_id] = raw
-            last_list_cb[owner_id] = "spage:0"
-            items, total = repo.search_contacts(owner_id, raw, limit=PAGE_SIZE, offset=0)
-            text, kb = render_search_view(raw, items, total, 0, PAGE_SIZE, repo.currency_unit)
-            await send_html(message, text, kb)
-            return
-
-        if prompt.kind == "search":
-            prompts.pop(owner_id, None)
-            if not raw or raw == "@" or len(raw) > 64:
-                await message.answer("搜索关键词无效（不能为空、单个 @ 或超过 64 字）。")
-                return
-            last_search[owner_id] = raw
-            last_list_cb[owner_id] = "spage:0"
-            items, total = repo.search_contacts(owner_id, raw, limit=PAGE_SIZE, offset=0)
-            text, kb = render_search_view(raw, items, total, 0, PAGE_SIZE, repo.currency_unit)
-            await send_html(message, text, kb)
             return
 
         if prompt.kind == "alias":
@@ -235,7 +201,11 @@ def create_admin_router(
                 return
             prompts.pop(owner_id, None)
             delta = intent.amount_tenths if intent.kind == "in" else -intent.amount_tenths
-            repo.admin_adjust(owner_id=owner_id, chat_id=prompt.target_chat_id, delta_tenths=delta, note=intent.note or "后台调账")
+            try:
+                repo.admin_adjust(owner_id=owner_id, chat_id=prompt.target_chat_id, delta_tenths=delta, note=intent.note or "后台调账")
+            except OverflowError:
+                await message.answer("金额超出安全范围，请重新输入。")
+                return
             text, kb = render_contact_card(owner_id, prompt.target_chat_id)
             await send_html(message, f"<i>已记录后台调账</i>\n\n{text}", kb)
             return
@@ -310,27 +280,6 @@ def create_admin_router(
                 rows.append([btn(f"#{t}", f"lst:tag:{t}:0", icon=TAG) for t in tags[i : i + 2]])
             rows.append([btn("返回首页", "home")])
             await safe_edit(cb, f"{tg_emoji(TAG)} <b>按标签筛选客户</b>\n\n<blockquote>选择一个标签查看对应分组：</blockquote>", InlineKeyboardMarkup(inline_keyboard=rows))
-            return
-
-        if act == "search":
-            prompts[owner_id] = PendingPrompt(kind="search")
-            await safe_edit(
-                cb,
-                f"{tg_emoji(SEARCH)} <b>搜索客户</b>\n\n<blockquote>请直接发送<b>别名 / 标签 / 姓名 / @用户名 / 数字 ID</b>：</blockquote>",
-                InlineKeyboardMarkup(inline_keyboard=[[btn("取消", "home")]]),
-            )
-            return
-
-        if act == "spage" and len(parts) == 2:
-            q = last_search.get(owner_id)
-            if not q:
-                await cb.answer("搜索已过期，请重新搜索", show_alert=True)
-                return
-            page = max(0, int(parts[1]))
-            last_list_cb[owner_id] = f"spage:{page}"
-            items, total = repo.search_contacts(owner_id, q, limit=PAGE_SIZE, offset=page * PAGE_SIZE)
-            text, kb = render_search_view(q, items, total, page, PAGE_SIZE, repo.currency_unit)
-            await safe_edit(cb, text, kb)
             return
 
         if act == "ct" and len(parts) == 2:
@@ -408,18 +357,6 @@ def create_admin_router(
             await safe_edit(cb, text, kb, answer=False)
             return
 
-        if act == "arch" and len(parts) == 2:
-            cid = int(parts[1])
-            c = repo.get_contact(owner_id, cid)
-            if not c:
-                await cb.answer("客户不存在", show_alert=True)
-                return
-            repo.set_archived(owner_id, cid, not c.archived)
-            await cb.answer("已更新归档状态")
-            text, kb = render_contact_card(owner_id, cid)
-            await safe_edit(cb, text, kb, answer=False)
-            return
-
         if act == "loc" and len(parts) == 2:
             ok, msg = await locate_contact(bot, owner_id, int(parts[1]))
             await cb.answer(msg, show_alert=not ok)
@@ -437,12 +374,13 @@ def create_admin_router(
             prune_tokens()
             tok = secrets.token_hex(6)
             settle_tokens[tok] = SettleToken(owner_id, cid, c.balance_tenths, c.tx_count, time.monotonic())
+            bal_sign = "+" if c.balance_tenths > 0 else ""
             await safe_edit(
                 cb,
                 (
                     "<b>确认结清归零</b>\n\n"
                     f"<blockquote>客户　<b>{esc(c.label)}</b>\n"
-                    f"当前余额　<b><code>{fmt_money(c.balance_tenths, repo.currency_unit)}</code></b>\n"
+                    f"当前余额　<b><code>{bal_sign}{fmt_money(c.balance_tenths, repo.currency_unit)}</code></b>\n"
                     "<i>仅后台结清留审计记录，不向客户发送回执（5 分钟有效）。</i></blockquote>"
                 ),
                 InlineKeyboardMarkup(
