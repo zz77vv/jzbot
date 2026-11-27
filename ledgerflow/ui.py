@@ -106,9 +106,9 @@ def render_home_view(d: DashboardStats, unit: str = "USDT") -> tuple[str, Inline
     text = (
         f"{tg_emoji(DIAMOND)} <b>记账助手</b>  ·  <i>财务总控台</i>\n\n"
         f"<blockquote><b>{tg_emoji(CASH)} 资产总览</b>\n"
-        f"存款总额　<code>+{fmt_money(d.positive_sum, unit)}</code>  ({d.positive_count}人)\n"
-        f"欠款总额　<code>{fmt_money(d.debt_sum, unit)}</code>  ({d.debt_count}人)\n"
-        f"资金净值　<b><code>{net_sign}{fmt_money(net, unit)}</code></b></blockquote>\n\n"
+        f"客户预存　<code>+{fmt_money(d.positive_sum, unit)}</code>  ({d.positive_count}人)\n"
+        f"客户未结　<code>{fmt_money(d.debt_sum, unit)}</code>  ({d.debt_count}人)\n"
+        f"账面净额　<b><code>{net_sign}{fmt_money(net, unit)}</code></b></blockquote>\n\n"
         f"<blockquote><b>{tg_emoji(CALENDAR)} 今日动态</b>\n"
         f"入账 <code>+{fmt_money(d.today_in, unit)}</code>  ·  出账 <code>-{fmt_money(d.today_out, unit)}</code>  ·  <code>{d.today_tx_count}</code> 笔\n"
         f"客户账本 <code>{d.total_contacts}</code>（零余额 <code>{d.zero_count}</code>）  ·  待发回执 <code>{d.pending_receipts}</code></blockquote>"
@@ -116,8 +116,8 @@ def render_home_view(d: DashboardStats, unit: str = "USDT") -> tuple[str, Inline
     kb = InlineKeyboardMarkup(
         inline_keyboard=[
             [
-                btn_success(f"存款 ({d.positive_count})", "lst:positive:0", icon=GREEN),
-                btn_danger(f"欠款 ({d.debt_count})", "lst:debt:0", icon=RED),
+                btn_success(f"预存 ({d.positive_count})", "lst:positive:0", icon=GREEN),
+                btn_danger(f"未结 ({d.debt_count})", "lst:debt:0", icon=RED),
                 btn_primary(f"全部 ({d.total_contacts})", "lst:all:0", icon=CASH),
             ],
             [
@@ -147,8 +147,8 @@ def render_contact_list_view(
 ) -> tuple[str, InlineKeyboardMarkup]:
     titles = {
         "all": "全部客户",
-        "positive": "存款排行",
-        "debt": "欠款排行",
+        "positive": "预存排行",
+        "debt": "未结排行",
         "today": "今日活跃",
         "archived": "已归档客户",
     }
@@ -311,13 +311,13 @@ def render_report_view(rep: FinancialReport, unit: str = "USDT") -> tuple[str, I
             f"{tg_emoji(medals[i - 1]) if i <= 3 else f'{i}.'} {esc(c.label)}　<code>+{fmt_money(c.balance_tenths, unit)}</code>"
             for i, c in enumerate(rep.top_positive, 1)
         )
-        blocks.append(f"<blockquote expandable><b>存款 Top 5（点击展开）</b>\n{lines}</blockquote>")
+        blocks.append(f"<blockquote expandable><b>预存 Top 5（点击展开）</b>\n{lines}</blockquote>")
     if rep.top_debt:
         lines = "\n".join(
             f"{tg_emoji(medals[i - 1]) if i <= 3 else f'{i}.'} {esc(c.label)}　<code>{fmt_money(c.balance_tenths, unit)}</code>"
             for i, c in enumerate(rep.top_debt, 1)
         )
-        blocks.append(f"<blockquote expandable><b>欠款 Top 5（点击展开）</b>\n{lines}</blockquote>")
+        blocks.append(f"<blockquote expandable><b>未结 Top 5（点击展开）</b>\n{lines}</blockquote>")
 
     def pbtn(key: str, text: str) -> InlineKeyboardButton:
         return btn_primary(text, f"rep:{key}") if period == key else btn(text, f"rep:{key}")
@@ -422,8 +422,8 @@ def render_announce_picker_view(tags: list[str]) -> tuple[str, InlineKeyboardMar
     )
     rows = [
         [btn_primary("全部有账本客户", "ann:pick:all", icon=CASH)],
-        [btn_success("存款客户（余额 > 0）", "ann:pick:positive", icon=GREEN), btn("非负余额（含零）", "ann:pick:non_negative")],
-        [btn_danger("欠款客户（余额 < 0）", "ann:pick:debt", icon=RED)],
+        [btn_success("预存客户（余额 > 0）", "ann:pick:positive", icon=GREEN), btn("非负余额（含零）", "ann:pick:non_negative")],
+        [btn_danger("未结客户（余额 < 0）", "ann:pick:debt", icon=RED)],
     ]
     for i in range(0, min(len(tags), 6), 2):
         row = [btn(f"标签 #{t}", f"ann:pick:tag:{t}", icon=TAG) for t in tags[i : i + 2]]
